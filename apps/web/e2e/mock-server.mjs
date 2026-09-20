@@ -92,12 +92,23 @@ const server = http.createServer(async (req, res) => {
     } else if (text.includes("错误")) {
       broadcast("turn_start");
       broadcast("agent_error", { message: "模拟错误" });
+    } else if (text.includes("中断")) {
+      broadcast("turn_start");
+      broadcast("assistant_text_delta", { text: "你好" });
+      // 不广播 turn_end，保持 busy，让前端显示「停止」按钮
     } else {
       broadcast("turn_start");
       broadcast("assistant_text_delta", { text: "你好，世界" });
       messages.push({ role: "assistant", content: "你好，世界" });
       broadcast("turn_end");
     }
+    return;
+  }
+  if (method === "POST" && pathname === "/api/stop") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true }));
+    messages.push({ role: "assistant", content: "你好", cancelled: true });
+    broadcast("turn_cancelled", { text: "你好" });
     return;
   }
   if (method === "POST" && pathname === "/api/approval") {

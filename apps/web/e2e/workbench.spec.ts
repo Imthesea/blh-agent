@@ -62,3 +62,14 @@ test("悬停会话显示三点并可删除", async ({ page }) => {
   await page.getByRole("menuitem", { name: "删除会话" }).click();
   await expect(page.getByText("历史会话")).toHaveCount(0);
 });
+
+test("回复中显示停止按钮，点击后中断并标记已中断", async ({ page }) => {
+  await page.goto("/");
+  await page.getByPlaceholder("输入消息…").fill("请中断");
+  await page.getByRole("button", { name: "发送" }).click();
+  const stopButton = page.getByRole("button", { name: "停止" });
+  await expect(stopButton).toBeVisible();
+  await stopButton.click();
+  await expect(page.getByText("(已中断)")).toBeVisible();
+  await expect(page.getByRole("button", { name: "发送" })).toBeVisible();
+});
