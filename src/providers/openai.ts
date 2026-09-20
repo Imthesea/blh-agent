@@ -80,12 +80,17 @@ export class OpenAIProvider implements ChatProvider {
       });
   }
 
+  private createOptions(signal?: AbortSignal): { timeout: number; signal?: AbortSignal } {
+    if (signal === undefined) return { timeout: 600_000 };
+    return { timeout: 600_000, signal };
+  }
+
   private async createCompletion(
     params: OpenAI.ChatCompletionCreateParamsNonStreaming,
     signal?: AbortSignal,
   ): Promise<OpenAI.ChatCompletion> {
     return withRetry(() =>
-      this.client.chat.completions.create(params, { timeout: 600_000, signal }),
+      this.client.chat.completions.create(params, this.createOptions(signal)),
     );
   }
 
@@ -168,7 +173,7 @@ export class OpenAIProvider implements ChatProvider {
             : {}),
           ...(maxTokens !== undefined ? { max_tokens: maxTokens } : {}),
         },
-        { timeout: 600_000, signal },
+        this.createOptions(signal),
       ),
     );
 
