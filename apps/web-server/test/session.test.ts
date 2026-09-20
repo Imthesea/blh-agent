@@ -203,4 +203,65 @@ describe("SessionManager", () => {
     expect(seenSignal?.aborted).toBe(true);
     await run;
   });
+
+  it("stop 中断正在运行的轮次而非排队中的轮次", async () => {
+    let turn1Started!: () => void;
+    const turn1Gate = new Promise<void>((resolve) => { turn1Started = resolve; });
+    let releaseTurn1!: () => void;
+    const turn1Blocker = new Promise<void>((resolve) => { releaseTurn1 = resolve; });
+
+    const signals: AbortSignal[] = [];
+    const runner: WebTurnRunner = {
+      newSession: () => [{ role: "system", content: "sys" }],
+      runTurn: vi.fn(async (_messages, _text, _events, signal) => {
+        signals.push(signal!);
+        if (signals.length === 1) {
+          turn1Started();
+          await turn1Blocker; // 第一轮持有锁并阻塞，模拟正在运行
+        }
+      }),
+    };
+
+    // 真实串行锁：后一轮排队，等前一轮完成才执行
+    let tail: Promise<unknown> = Promise.resolve();
+    const lock: TurnLock = {
+      withLock: <T,>(fn: () => Promise<T>): Promise<T> => {
+        const result = tail.then(() => fn());
+        tail = result.catch(() => {});
+        return result;
+      },
+    };
+
+    const manager = new SessionManager(runner, lock, () => {}, new ApprovalCoordinator(() => {}), makeTestSessionStore());
+    const handle = manager.create(tmpDir);
+
+    const run1 = manager.runTurn(handle.id, "one");
+    await turn1Gate; // 等第一轮真正开始
+    void manager.runTurn(handle.id, "two"); // 第二轮排队
+
+    expect(manager.stop()).toBe(true);
+    expect(signals[0]!.aborted).toBe(true);
+    expect(signals).toHaveLength(1); // 第二轮尚未开始
+
+    releaseTurn1();
+    await run1;
+  });
+
+  it("stop 拒绝待审批请求", async () => {
+    const approvals = new ApprovalCoordinator(() => {});
+    let decision: string | undefined;
+    const runner: WebTurnRunner = {
+      newSession: () => [{ role: "system", content: "sys" }],
+      runTurn: vi.fn(async (_messages, _text, _events, _signal) => {
+        decision = await approvals.ask({ tool: "bash", target: "ls", args: {} });
+      }),
+    };
+    const manager = new SessionManager(runner, fakeLock(), () => {}, approvals, makeTestSessionStore());
+    const handle = manager.create(tmpDir);
+    const run = manager.runTurn(handle.id, "hi");
+    await new Promise((r) => setTimeout(r, 10));
+    expect(manager.stop()).toBe(true);
+    await run;
+    expect(decision).toBe("deny");
+  });
 });

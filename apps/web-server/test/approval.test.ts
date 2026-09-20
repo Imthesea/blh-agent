@@ -65,4 +65,13 @@ describe("ApprovalCoordinator", () => {
       vi.useRealTimers();
     }
   });
+
+  it("denyAll 拒绝所有待审批请求", async () => {
+    const coordinator = new ApprovalCoordinator(() => {});
+    const p1 = coordinator.ask({ tool: "bash", target: "ls", args: {} });
+    const p2 = coordinator.ask({ tool: "bash", target: "rm", args: {} });
+    coordinator.denyAll();
+    await expect(p1).resolves.toBe("deny");
+    await expect(p2).resolves.toBe("deny");
+  });
 });

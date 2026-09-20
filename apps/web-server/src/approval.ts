@@ -87,4 +87,14 @@ export class ApprovalCoordinator {
     entry.resolve(decision);
     return true;
   }
+
+  /** 拒绝所有待审批请求（用于中断时兜底，避免审批 Promise 一直挂起）。 */
+  denyAll(): void {
+    for (const [requestId, entry] of this.pending) {
+      clearTimeout(entry.timer);
+      this.pending.delete(requestId);
+      entry.resolve("deny");
+      log.debug("approval denied by stop", { requestId });
+    }
+  }
 }

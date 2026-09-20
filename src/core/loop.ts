@@ -32,6 +32,17 @@ export function lastAssistantText(messages: ChatMessage[]): string {
   return "";
 }
 
+/** 把最后一条 assistant 消息标记为「已中断」，供前端 refresh 后展示 (已中断) 标记。 */
+function markLastAssistantCancelled(messages: ChatMessage[]): void {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (message?.role === "assistant") {
+      message.cancelled = true;
+      return;
+    }
+  }
+}
+
 /**
  * 核心对话循环：反复调用模型，直到模型不再要求调用工具为止。
  * 每轮先压缩历史、注入后台任务结果，再请求模型；
@@ -66,6 +77,7 @@ export async function agentLoop(
   // 一个死循环，靠内部的 return 来退出（模型不再调用工具且目标达成时退出）。
   for (;;) {
     if (signal?.aborted) {
+      markLastAssistantCancelled(messages);
       await events?.emit({ type: "turn_cancelled", text: "" });
       return;
     }
@@ -222,6 +234,7 @@ export async function agentLoop(
     }
 
     if (signal?.aborted) {
+      markLastAssistantCancelled(messages);
       await events?.emit({ type: "turn_cancelled", text: "" });
       return;
     }

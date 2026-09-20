@@ -181,6 +181,8 @@ describe("agentLoop", () => {
     expect(abortSeen).toBe(true);
     expect(events.map((e) => e.type)).toContain("turn_cancelled");
     expect(lastAssistantText(messages)).not.toBe("should not appear");
+    const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
+    expect(lastAssistant?.cancelled).toBe(true);
   });
 });
 

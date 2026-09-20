@@ -75,6 +75,11 @@ describe("isRetryable", () => {
   it("retries errors without status (network failures)", () => {
     expect(isRetryable(new Error("socket hang up"))).toBe(true);
   });
+  it("does not retry abort errors", () => {
+    expect(isRetryable(Object.assign(new Error("aborted"), { name: "AbortError" }))).toBe(false);
+    expect(isRetryable(Object.assign(new Error("aborted"), { name: "APIUserAbortError", status: undefined }))).toBe(false);
+    expect(isRetryable(Object.assign(new Error("aborted"), { name: "CanceledError" }))).toBe(false);
+  });
 });
 
 describe("withRetry", () => {
@@ -101,6 +106,12 @@ describe("withRetry", () => {
   it("throws non-retryable errors immediately", async () => {
     const fn = vi.fn().mockRejectedValue(httpError(400));
     await expect(withRetry(fn)).rejects.toThrow("http 400");
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry abort errors", async () => {
+    const fn = vi.fn().mockRejectedValue(Object.assign(new Error("aborted"), { name: "APIUserAbortError" }));
+    await expect(withRetry(fn)).rejects.toThrow("aborted");
     expect(fn).toHaveBeenCalledTimes(1);
   });
 

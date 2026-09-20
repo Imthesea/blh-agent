@@ -77,8 +77,12 @@ export class SessionManager {
     const events = new EventBus();
     const off = events.subscribe((event) => this.broadcast(event));
     const controller = new AbortController();
-    this.currentAbort = controller;
-    const run = () => this.runner.runTurn(handle.messages, text, events, controller.signal);
+    const run = () => {
+      // 在真正拿到锁、开始跑之前才登记 currentAbort，避免并发排队时被后一轮覆盖，
+      // 导致 stop() 中断的是排队中的轮次而非正在运行的轮次。
+      this.currentAbort = controller;
+      return this.runner.runTurn(handle.messages, text, events, controller.signal);
+    };
     log.debug("run turn", { id, textLength: text.length });
     return this.lock.withLock(run).finally(() => {
       off();
@@ -90,6 +94,8 @@ export class SessionManager {
   stop(): boolean {
     if (this.currentAbort === null) return false;
     this.currentAbort.abort();
+    // 审批等待期间不可中断是 UI 层约束；此处兜底拒绝待审批请求，避免有人绕过前端直接调 /api/stop。
+    this.approvals.denyAll();
     return true;
   }
 

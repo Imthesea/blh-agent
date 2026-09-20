@@ -22,9 +22,16 @@ export function retryDelay(attempt: number, error?: unknown): number {
 }
 
 export function isRetryable(error: unknown): boolean {
-  if (typeof error === "object" && error !== null && "status" in error) {
-    if (typeof error.status !== "number") return true; // status 不可读：按网络错误处理，可重试
-    return error.status === 429 || error.status >= 500;
+  if (typeof error === "object" && error !== null) {
+    // 用户主动中断（AbortController）不应重试；否则取消会被当作网络错误重试最多 5 次。
+    const name = (error as { name?: unknown }).name;
+    if (name === "AbortError" || name === "APIUserAbortError" || name === "CanceledError") {
+      return false;
+    }
+    if ("status" in error) {
+      if (typeof error.status !== "number") return true; // status 不可读：按网络错误处理，可重试
+      return error.status === 429 || error.status >= 500;
+    }
   }
   return true; // 无 status：网络错误等，可重试
 }
