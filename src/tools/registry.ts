@@ -15,11 +15,11 @@ export class ToolRegistry {
     return [...this.tools.values()];
   }
 
-  async dispatch(name: string, args: Record<string, unknown>): Promise<string> {
+  async dispatch(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<string> {
     const tool = this.tools.get(name);
     if (!tool) return `error: unknown tool '${name}'`;
     try {
-      return await tool.handler(args);
+      return await tool.handler(args, signal);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (error instanceof TypeError) return `error: invalid tool arguments: ${message}`;

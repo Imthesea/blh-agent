@@ -5,6 +5,7 @@ export function runBash(
   defaultTimeout: number,
   maxOutputChars: number,
   args: Record<string, unknown>,
+  signal?: AbortSignal,
 ): Promise<string> {
   if (typeof args.command !== "string") throw new TypeError("command must be a string");
   const command = args.command;
@@ -24,6 +25,20 @@ export function runBash(
       cwd: workdir,
       detached: process.platform !== "win32",
     });
+
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      if (timer !== undefined) clearTimeout(timer);
+      void killTree(child).then(() => resolve("error: command cancelled"));
+    };
+    if (signal !== undefined) {
+      if (signal.aborted) {
+        onAbort();
+        return;
+      }
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
 
     child.stdout?.on("data", (chunk: Buffer) => {
       stdout += chunk.toString("utf8");

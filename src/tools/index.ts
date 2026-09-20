@@ -19,7 +19,7 @@ export function registerBuiltinTools(registry: ToolRegistry, config: Config): vo
       },
       required: ["command"],
     },
-    handler: (args) => runBash(workdir, config.bashTimeout, config.maxOutputChars, args),
+    handler: (args, signal) => runBash(workdir, config.bashTimeout, config.maxOutputChars, args, signal),
   });
 
   registry.register({

@@ -80,6 +80,38 @@ describe("runBash", () => {
     }
     expect(alive).toBe(false);
   }, 15000);
+  it("abort 后强杀正在运行的命令并返回 cancelled", async () => {
+    const pidFile = path.join(dir, "pid.txt");
+    await fs.writeFile(
+      path.join(dir, "pid.js"),
+      `require('fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(()=>{},1000)`,
+    );
+    const { runBash } = await import("../../src/tools/bash.js");
+    const controller = new AbortController();
+    const promise = runBash(dir, 120, 30000, { command: "node pid.js" }, controller.signal);
+
+    let pid = 0;
+    for (let i = 0; i < 50 && pid === 0; i++) {
+      await new Promise((r) => setTimeout(r, 50));
+      try {
+        pid = Number(await fs.readFile(pidFile, "utf8"));
+      } catch {
+        /* 还没写 */
+      }
+    }
+    expect(pid).toBeGreaterThan(0);
+
+    controller.abort();
+    await expect(promise).resolves.toBe("error: command cancelled");
+
+    let alive = true;
+    try {
+      process.kill(pid, 0);
+    } catch {
+      alive = false;
+    }
+    expect(alive).toBe(false);
+  }, 15000);
   it("truncates huge output", async () => {
     const out = await runScript("console.log('x'.repeat(500))", 120, 100);
     expect(out).toContain("... [truncated, 501 chars total]");
