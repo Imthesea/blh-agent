@@ -8,6 +8,7 @@ export type AgentEvent =
   | { type: "assistant_text_delta"; text: string }
   | { type: "tool_call"; id: string; name: string; arguments: string }
   | { type: "tool_result"; id: string; name: string; output: string; isError: boolean }
+  | { type: "turn_cancelled"; text: string }
   | { type: "turn_end" };
 
 type Listener = (event: AgentEvent) => void;

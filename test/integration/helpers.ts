@@ -4,7 +4,12 @@ import type { ChatMessage, ChatProvider, ToolDefinition } from "../../src/core/t
 export class MockProvider implements ChatProvider {
   calls = 0;
   constructor(private readonly script: ChatMessage[]) {}
-  async chat(_messages: ChatMessage[], _tools: ToolDefinition[], _maxTokens?: number): Promise<ChatMessage> {
+  async chat(
+    _messages: ChatMessage[],
+    _tools: ToolDefinition[],
+    _maxTokens?: number,
+    _signal?: AbortSignal,
+  ): Promise<ChatMessage> {
     this.calls += 1;
     const next = this.script.shift();
     if (!next) throw new Error("MockProvider: script exhausted");

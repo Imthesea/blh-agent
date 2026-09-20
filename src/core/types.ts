@@ -12,9 +12,11 @@ export interface ChatMessage {
   tool_calls?: ToolCall[];
   tool_call_id?: string;
   name?: string;
+  /** 该条 assistant 消息是否因用户中断而提前结束 */
+  cancelled?: boolean;
 }
 
-export type ToolHandler = (args: Record<string, unknown>) => Promise<string>;
+export type ToolHandler = (args: Record<string, unknown>, signal?: AbortSignal) => Promise<string>;
 
 /** 工具参数 JSON Schema 属性（递归，支持 enum / array items / 嵌套 object） */
 export type JsonSchemaProperty = {
@@ -52,8 +54,8 @@ export interface Config {
 }
 
 export interface ChatProvider {
-  chat(messages: ChatMessage[], tools: ToolDefinition[], maxTokens?: number): Promise<ChatMessage>;
-  stream?(messages: ChatMessage[], tools: ToolDefinition[], maxTokens?: number): AsyncIterable<ProviderStreamEvent>;
+  chat(messages: ChatMessage[], tools: ToolDefinition[], maxTokens?: number, signal?: AbortSignal): Promise<ChatMessage>;
+  stream?(messages: ChatMessage[], tools: ToolDefinition[], maxTokens?: number, signal?: AbortSignal): AsyncIterable<ProviderStreamEvent>;
 }
 
 /** 一次 LLM 调用的 token 用量 */
