@@ -120,6 +120,68 @@ describe("agentLoop", () => {
       content: "denied by user",
     });
   });
+
+  it("流式生成中被中断：落盘半成品并广播 turn_cancelled", async () => {
+    const provider = new CancellableStreamProvider([makeTextMessage("你好，我是")]);
+    const harness = makeHarness([], { provider });
+    const tmpDir = mkdtempSync(path.join(os.tmpdir(), "loop-cancel-"));
+    harness.sessionStore = SessionStore.create(tmpDir);
+    const events: AgentEvent[] = [];
+    const bus = new EventBus();
+    bus.subscribe((e) => events.push(e));
+    const controller = new AbortController();
+    const messages = harness.newSession();
+    const run = harness.runTurn(messages, "go", bus, controller.signal);
+    await new Promise((r) => setTimeout(r, 10));
+    controller.abort();
+    await run;
+
+    expect(events.map((e) => e.type)).toContain("turn_cancelled");
+    const cancelled = events.find((e) => e.type === "turn_cancelled");
+    expect((cancelled as { text: string }).text).toBe("你好，我是");
+    const last = messages[messages.length - 1]!;
+    expect(last.cancelled).toBe(true);
+    expect(last.content).toBe("你好，我是");
+    expect(SessionStore.load(harness.sessionStore!.path).some((m) => m.cancelled === true)).toBe(true);
+  });
+
+  it("工具执行后被中断：广播 turn_cancelled 且不再继续循环", async () => {
+    let abortSeen = false;
+    const slowTool: ToolDefinition = {
+      name: "slow",
+      description: "",
+      parameters: { type: "object" },
+      handler: async (_args, signal) => {
+        await new Promise<void>((resolve) => {
+          signal?.addEventListener("abort", () => {
+            abortSeen = true;
+            resolve();
+          }, { once: true });
+        });
+        return "error: command cancelled";
+      },
+    };
+    const harness = makeHarness(
+      [makeToolCallMessage("slow", {}), makeTextMessage("should not appear")],
+      { tools: [slowTool] },
+    );
+    const events: AgentEvent[] = [];
+    const bus = new EventBus();
+    bus.subscribe((e) => events.push(e));
+    const controller = new AbortController();
+    const messages = harness.newSession();
+    const run = harness.runTurn(messages, "go", bus, controller.signal);
+    const deadline = Date.now() + 1000;
+    while (!events.some((e) => e.type === "tool_call") && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    controller.abort();
+    await run;
+
+    expect(abortSeen).toBe(true);
+    expect(events.map((e) => e.type)).toContain("turn_cancelled");
+    expect(lastAssistantText(messages)).not.toBe("should not appear");
+  });
 });
 
 function sequentialEvaluator(results: GoalEvaluation[]): GoalEvaluator {
@@ -704,6 +766,30 @@ class StreamingProvider implements ChatProvider {
     if (!message) throw new Error("StreamingProvider: script exhausted");
     if (message.content) yield { type: "text_delta", text: message.content };
     yield { type: "done", message };
+  }
+}
+
+class CancellableStreamProvider implements ChatProvider {
+  constructor(private readonly script: ChatMessage[]) {}
+
+  async chat(): Promise<ChatMessage> {
+    throw new Error("CancellableStreamProvider.chat unused");
+  }
+
+  async *stream(
+    _messages: ChatMessage[],
+    _tools: ToolDefinition[],
+    _maxTokens?: number,
+    signal?: AbortSignal,
+  ): AsyncIterable<ProviderStreamEvent> {
+    const message = this.script.shift();
+    if (!message) throw new Error("CancellableStreamProvider: script exhausted");
+    if (message.content) yield { type: "text_delta", text: message.content };
+    await new Promise<void>((resolve) => {
+      if (signal?.aborted) return resolve();
+      signal?.addEventListener("abort", () => resolve(), { once: true });
+    });
+    throw Object.assign(new Error("aborted"), { name: "AbortError" });
   }
 }
 

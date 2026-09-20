@@ -10,6 +10,14 @@ import { parseToolArguments } from "./parse-args.js";
 
 const log = createLogger("core.loop");
 
+/** 用户主动中断当前轮时抛出，携带已生成的半成品文字。 */
+export class TurnCancelledError extends Error {
+  constructor(readonly partialText: string) {
+    super("turn cancelled");
+    this.name = "TurnCancelledError";
+  }
+}
+
 export { parseToolArguments };
 
 /** 提示词过长时，允许「被动压缩后重试」的最大次数 */
@@ -45,6 +53,7 @@ export async function agentLoop(
   messages: ChatMessage[],
   activeRequest = "",
   events?: EventBus,
+  signal?: AbortSignal,
 ): Promise<void> {
   // 系统消息（system）通常放在消息列表第一项，用来设定 AI 的角色和规则。
   // 如果第一项不是 system，就用 harness 里预设好的系统提示词兜底，保证后面压缩历史时能把它找回来。
@@ -56,6 +65,10 @@ export async function agentLoop(
   await events?.emit({ type: "turn_start" });
   // 一个死循环，靠内部的 return 来退出（模型不再调用工具且目标达成时退出）。
   for (;;) {
+    if (signal?.aborted) {
+      await events?.emit({ type: "turn_cancelled", text: "" });
+      return;
+    }
     log.debug("turn start", { messages: messages.length });
     const compactor = harness.compactor;
     // 如果配置了压缩器，每轮开始前先「整理」一遍历史消息。
@@ -78,21 +91,36 @@ export async function agentLoop(
       if (streamAvailable) {
         // 走流式输出，边生成边把文字增量广播出去。
         try {
-          message = await streamAssistantMessage(harness.provider, messages, harness.tools.list(), events);
+          message = await streamAssistantMessage(harness.provider, messages, harness.tools.list(), events, signal);
         } catch (error) {
+          if (error instanceof TurnCancelledError) throw error;
           // 流式偶尔会失败，这里退回到非流式方式再试一次，保证对话不中断。
           log.warn("stream failed, falling back to non-streaming", {
             error: error instanceof Error ? error.message : String(error),
           });
-          message = await harness.provider.chat(messages, harness.tools.list());
+          message = await harness.provider.chat(messages, harness.tools.list(), undefined, signal);
         }
       } else {
         // 不支持流式就直接用普通方式调用模型。
-        message = await harness.provider.chat(messages, harness.tools.list());
+        message = await harness.provider.chat(messages, harness.tools.list(), undefined, signal);
       }
       // 这轮成功拿到模型回复了，说明「提示词过长」的问题（如果之前有过）已经解决，重置重试计数。
       reactiveRetries = 0;
     } catch (error) {
+      if (error instanceof TurnCancelledError) {
+        const partial: ChatMessage = { role: "assistant", content: error.partialText, cancelled: true };
+        messages.push(partial);
+        harness.sessionStore?.append(partial);
+        await events?.emit({ type: "turn_cancelled", text: error.partialText });
+        return;
+      }
+      if (signal?.aborted) {
+        const partial: ChatMessage = { role: "assistant", content: "", cancelled: true };
+        messages.push(partial);
+        harness.sessionStore?.append(partial);
+        await events?.emit({ type: "turn_cancelled", text: "" });
+        return;
+      }
       // 如果是因为「提示词太长」报错，且还没超过重试上限，就主动压缩一次历史再从头重试。
       // 这是一种「被动补救」：平时主动压缩，这里是在真正报错时才紧急压缩。
       if (compactor && isPromptTooLong(error) && reactiveRetries < MAX_REACTIVE_RETRIES) {
@@ -173,7 +201,7 @@ export async function agentLoop(
         if (blocked !== null) {
           result = blocked;
         } else {
-          result = await harness.tools.dispatch(name, input);
+          result = await harness.tools.dispatch(name, input, signal);
           await harness.hooks.trigger(POST_TOOL_USE, { name, input, output: result });
         }
         // 如果这次调用的正好是 todo_write，记下标记，稍后提醒模型更新待办进度。
@@ -191,6 +219,11 @@ export async function agentLoop(
       const toolMessage: ChatMessage = { role: "tool", tool_call_id: call.id, content: result };
       messages.push(toolMessage);
       harness.sessionStore?.append(toolMessage);
+    }
+
+    if (signal?.aborted) {
+      await events?.emit({ type: "turn_cancelled", text: "" });
+      return;
     }
 
     // 如果配置了待办管理器，并且本轮调用过 todo_write，就把「待办进度提醒」拼到最后一条工具结果上。
@@ -241,14 +274,22 @@ async function streamAssistantMessage(
   messages: ChatMessage[],
   tools: ToolDefinition[],
   events: EventBus,
+  signal?: AbortSignal,
 ): Promise<ChatMessage> {
-  const stream = provider.stream!(messages, tools);
-  for await (const event of stream) {
-    if (event.type === "text_delta") {
-      await events.emit({ type: "assistant_text_delta", text: event.text });
-    } else if (event.type === "done") {
-      return event.message;
+  const stream = provider.stream!(messages, tools, undefined, signal);
+  let partialText = "";
+  try {
+    for await (const event of stream) {
+      if (event.type === "text_delta") {
+        partialText += event.text;
+        await events.emit({ type: "assistant_text_delta", text: event.text });
+      } else if (event.type === "done") {
+        return event.message;
+      }
     }
+  } catch (error) {
+    if (signal?.aborted) throw new TurnCancelledError(partialText);
+    throw error;
   }
   throw new Error("provider stream ended without a done event");
 }

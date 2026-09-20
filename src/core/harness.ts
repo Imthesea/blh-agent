@@ -81,7 +81,7 @@ export class Harness {
   }
 
   /** 跑一轮用户对话：把用户输入加进对话，处理记忆，然后交给 agentLoop 执行并收尾。 */
-  async runTurn(messages: ChatMessage[], text: string, events?: EventBus): Promise<void> {
+  async runTurn(messages: ChatMessage[], text: string, events?: EventBus, signal?: AbortSignal): Promise<void> {
     await this.hooks.trigger(USER_PROMPT_SUBMIT, { text });
     const userMessage: ChatMessage = { role: "user", content: text };
     messages.push(userMessage);
@@ -90,7 +90,7 @@ export class Harness {
     if (this.memory && systemMessage) {
       systemMessage.content = await this.fullSystemPrompt(messages);
     }
-    await agentLoop(this, messages, text, events);
+    await agentLoop(this, messages, text, events, signal);
     await this.hooks.trigger(STOP, {});
     if (this.memory && (await this.memory.extract(messages))) {
       await this.memory.consolidate();
