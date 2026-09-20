@@ -373,7 +373,8 @@ describe("MCPClient over HTTP", () => {
     const server = await startHttpServer(
       legacyHttpHandler({
         onRequest: (headers) => {
-          seenSessionIds.push(headers["mcp-session-id"]);
+          const sid = headers["mcp-session-id"];
+          seenSessionIds.push(typeof sid === "string" ? sid : undefined);
         },
       }),
     );

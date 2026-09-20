@@ -26,6 +26,7 @@ export type JsonSchemaProperty = {
   items?: JsonSchemaProperty;
   properties?: Record<string, JsonSchemaProperty>;
   required?: string[];
+  additionalProperties?: JsonSchemaProperty;
 };
 
 /** 工具参数的 JSON Schema，整体必须是一个 object */
