@@ -19,11 +19,11 @@ export interface ChatCompletionsClient {
     completions: {
       create(
         params: OpenAI.ChatCompletionCreateParamsNonStreaming,
-        options?: { timeout?: number },
+        options?: { timeout?: number; signal?: AbortSignal },
       ): Promise<OpenAI.ChatCompletion>;
       create(
         params: OpenAI.ChatCompletionCreateParamsStreaming,
-        options?: { timeout?: number },
+        options?: { timeout?: number; signal?: AbortSignal },
       ): Promise<AsyncIterable<OpenAI.ChatCompletionChunk>>;
     };
   };
@@ -82,13 +82,14 @@ export class OpenAIProvider implements ChatProvider {
 
   private async createCompletion(
     params: OpenAI.ChatCompletionCreateParamsNonStreaming,
+    signal?: AbortSignal,
   ): Promise<OpenAI.ChatCompletion> {
     return withRetry(() =>
-      this.client.chat.completions.create(params, { timeout: 600_000 }),
+      this.client.chat.completions.create(params, { timeout: 600_000, signal }),
     );
   }
 
-  async chat(messages: ChatMessage[], tools: ToolDefinition[], maxTokens?: number): Promise<ChatMessage> {
+  async chat(messages: ChatMessage[], tools: ToolDefinition[], maxTokens?: number, signal?: AbortSignal): Promise<ChatMessage> {
     log.debug("chat request", { model: this.config.model, messages: messages.length, tools: tools.length });
     const response = await this.createCompletion({
       model: this.config.model,
@@ -106,7 +107,7 @@ export class OpenAIProvider implements ChatProvider {
           }
         : {}),
       ...(maxTokens !== undefined ? { max_tokens: maxTokens } : {}),
-    });
+    }, signal);
     const message = response.choices[0]?.message;
     if (!message) throw new Error("provider returned no choices");
     log.debug("chat response", { toolCalls: message.tool_calls?.length ?? 0 });
@@ -143,6 +144,7 @@ export class OpenAIProvider implements ChatProvider {
     messages: ChatMessage[],
     tools: ToolDefinition[],
     maxTokens?: number,
+    signal?: AbortSignal,
   ): AsyncIterable<ProviderStreamEvent> {
     log.debug("stream request", { model: this.config.model, messages: messages.length, tools: tools.length });
     const stream = await withRetry(() =>
@@ -166,7 +168,7 @@ export class OpenAIProvider implements ChatProvider {
             : {}),
           ...(maxTokens !== undefined ? { max_tokens: maxTokens } : {}),
         },
-        { timeout: 600_000 },
+        { timeout: 600_000, signal },
       ),
     );
 

@@ -89,6 +89,36 @@ describe("OpenAIProvider", () => {
     await provider.chat([{ role: "user", content: "hi" }], []);
     expect(create.mock.calls[0]?.[0]).not.toHaveProperty("max_tokens");
   });
+
+  it("passes signal through to chat.completions.create", async () => {
+    const { OpenAIProvider } = await import("../../src/providers/openai.js");
+    const create = vi.fn().mockResolvedValue({ choices: [{ message: { role: "assistant", content: "hi" } }] });
+    const provider = new OpenAIProvider(config, makeClient(create));
+    const controller = new AbortController();
+    await provider.chat([{ role: "user", content: "hi" }], [], undefined, controller.signal);
+    expect(create).toHaveBeenCalledWith(expect.anything(), {
+      timeout: 600_000,
+      signal: controller.signal,
+    });
+  });
+
+  it("passes signal through in stream", async () => {
+    const { OpenAIProvider } = await import("../../src/providers/openai.js");
+    const create = vi.fn().mockResolvedValue(
+      (async function* () {
+        yield { choices: [{ index: 0, delta: { content: "hi" } }] };
+      })(),
+    );
+    const provider = new OpenAIProvider(config, makeClient(create));
+    const controller = new AbortController();
+    for await (const _ of provider.stream!([{ role: "user", content: "hi" }], [], undefined, controller.signal)) {
+      /* 消费完 */
+    }
+    expect(create).toHaveBeenCalledWith(expect.anything(), {
+      timeout: 600_000,
+      signal: controller.signal,
+    });
+  });
 });
 
 describe("isPromptTooLong", () => {
