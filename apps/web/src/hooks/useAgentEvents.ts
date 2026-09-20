@@ -8,6 +8,7 @@ import {
   respondApproval,
   resumeSession,
   sendMessage,
+  stopMessage,
   type ApprovalDecision,
   type ChatMessage,
   type SessionListItem,
@@ -63,6 +64,8 @@ export interface AgentState {
   sessionId: string | null;
   workdir: string;
   send(text: string): Promise<void>;
+  stop(): Promise<void>;
+  canStop: boolean;
   respond(decision: ApprovalDecision): Promise<void>;
   createSession(): Promise<void>;
   resume(file: string): Promise<void>;
@@ -158,6 +161,13 @@ export function useAgentEvents(): AgentState {
             setToolEvents([]);
             void refresh();
             break;
+          case "turn_cancelled":
+            setBusy(false);
+            setStreaming("");
+            streamBuf.current = [];
+            setToolEvents([]);
+            void refresh();
+            break;
           case "approval_requested":
             setApproval({
               requestId: event.requestId,
@@ -204,6 +214,15 @@ export function useAgentEvents(): AgentState {
       setError(e instanceof Error ? e.message : String(e));
       log.error("send failed", {}, e);
       setMessages((ms) => ms.filter((m) => m.id !== userMessage.id));
+    }
+  }, []);
+
+  const stop = useCallback(async () => {
+    try {
+      await stopMessage();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      log.error("stop failed", {}, e);
     }
   }, []);
 
@@ -280,6 +299,8 @@ export function useAgentEvents(): AgentState {
     sessionId,
     workdir,
     send,
+    stop,
+    canStop: busy && approval === null,
     respond,
     createSession,
     resume,

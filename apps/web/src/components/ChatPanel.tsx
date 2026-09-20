@@ -53,7 +53,10 @@ export function ChatPanel(props: {
           {turn.final !== null && (
             <div className="bubble bubble-assistant">
               <span className="bubble-role">assistant</span>
-              <span className="bubble-text">{turn.final.content ?? ""}</span>
+              <span className="bubble-text">
+                {turn.final.content ?? ""}
+                {turn.final.cancelled ? <span className="cancelled-mark">(已中断)</span> : null}
+              </span>
             </div>
           )}
         </div>

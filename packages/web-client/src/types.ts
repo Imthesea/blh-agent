@@ -3,6 +3,7 @@ export type AgentEvent =
   | { type: "assistant_text_delta"; text: string }
   | { type: "tool_call"; id: string; name: string; arguments: string }
   | { type: "tool_result"; id: string; name: string; output: string; isError: boolean }
+  | { type: "turn_cancelled"; text: string }
   | { type: "turn_end" };
 
 export type WebEvent =
@@ -27,6 +28,8 @@ export interface ChatMessage {
   tool_call_id?: string;
   /** tool 消息的工具名 */
   name?: string;
+  /** 该条 assistant 消息是否因用户中断而停止生成 */
+  cancelled?: boolean;
 }
 
 export interface SessionInfo {

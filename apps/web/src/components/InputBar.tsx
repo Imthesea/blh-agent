@@ -1,7 +1,12 @@
 import { useState } from "react";
 
-export function InputBar(props: { busy: boolean; onSend(text: string): void }) {
-  const { busy, onSend } = props;
+export function InputBar(props: {
+  busy: boolean;
+  canStop: boolean;
+  onSend(text: string): void;
+  onStop(): void;
+}) {
+  const { busy, canStop, onSend, onStop } = props;
   const [text, setText] = useState("");
 
   function submit() {
@@ -25,9 +30,15 @@ export function InputBar(props: { busy: boolean; onSend(text: string): void }) {
         placeholder="输入消息…"
         disabled={busy}
       />
-      <button type="submit" disabled={busy || text.trim() === ""}>
-        发送
-      </button>
+      {canStop ? (
+        <button type="button" className="stop" onClick={() => onStop()}>
+          停止
+        </button>
+      ) : (
+        <button type="submit" disabled={busy || text.trim() === ""}>
+          发送
+        </button>
+      )}
     </form>
   );
 }

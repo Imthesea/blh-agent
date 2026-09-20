@@ -8,6 +8,7 @@ const EVENT_TYPES = [
   "assistant_text_delta",
   "tool_call",
   "tool_result",
+  "turn_cancelled",
   "turn_end",
   "approval_requested",
   "agent_error",

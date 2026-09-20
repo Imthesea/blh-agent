@@ -46,7 +46,9 @@ export function groupMessages(messages: UiMessage[]): TurnBlock[] {
     let finalIdx = -1;
     for (let i = 1; i < seg.length; i++) {
       const m = seg[i]!;
-      if (m.role === "assistant" && (m.content ?? "").trim() !== "") finalIdx = i;
+      if (m.role === "assistant" && ((m.content ?? "").trim() !== "" || m.cancelled === true)) {
+        finalIdx = i;
+      }
     }
 
     const thinking: ThinkingStep[] = [];

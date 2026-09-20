@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getSession, getSessionMessages, sendMessage } from "../src/api.js";
+import { getSession, getSessionMessages, sendMessage, stopMessage } from "../src/api.js";
 
 function jsonResponse(body: unknown, ok = true, status = 200): Response {
   return {
@@ -41,6 +41,15 @@ describe("api", () => {
     const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
     expect(init.method).toBe("POST");
     expect(JSON.parse(init.body as string)).toEqual({ text: "hello" });
+  });
+
+  it("stopMessage 发送 POST /api/stop", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
+    await stopMessage();
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/stop");
+    expect(init.method).toBe("POST");
   });
 
   it("非 2xx 抛错并带服务端 error", async () => {

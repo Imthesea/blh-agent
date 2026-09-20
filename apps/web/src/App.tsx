@@ -40,7 +40,12 @@ export function App() {
         />
         {/* 有错误时在顶部显示错误横幅 */}
         {state.error !== null && <div className="error-banner">{state.error}</div>}
-        <InputBar busy={state.busy} onSend={(text) => void state.send(text)} />
+        <InputBar
+          busy={state.busy}
+          canStop={state.canStop}
+          onSend={(text) => void state.send(text)}
+          onStop={() => void state.stop()}
+        />
       </main>
       <ApprovalModal approval={state.approval} onRespond={(d) => void state.respond(d)} />
     </div>

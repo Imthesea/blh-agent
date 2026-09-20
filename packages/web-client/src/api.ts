@@ -35,6 +35,10 @@ export function sendMessage(text: string): Promise<unknown> {
   });
 }
 
+export function stopMessage(): Promise<unknown> {
+  return request("/api/stop", { method: "POST" });
+}
+
 export function respondApproval(requestId: string, decision: ApprovalDecision): Promise<unknown> {
   return request("/api/approval", {
     method: "POST",
