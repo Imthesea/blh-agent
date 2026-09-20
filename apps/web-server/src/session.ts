@@ -24,6 +24,7 @@ export interface SessionHandle {
 /** 会话管理：当前单会话实现；接口按多会话可扩展（未来换成 Map<id, handle>）。 */
 export class SessionManager {
   private current: SessionHandle | undefined;
+  private currentAbort: AbortController | null = null;
 
   constructor(
     private readonly runner: WebTurnRunner,
@@ -75,9 +76,21 @@ export class SessionManager {
     if (handle === undefined) return Promise.reject(new Error(`no such session: ${id}`));
     const events = new EventBus();
     const off = events.subscribe((event) => this.broadcast(event));
-    const run = () => this.runner.runTurn(handle.messages, text, events);
+    const controller = new AbortController();
+    this.currentAbort = controller;
+    const run = () => this.runner.runTurn(handle.messages, text, events, controller.signal);
     log.debug("run turn", { id, textLength: text.length });
-    return this.lock.withLock(run).finally(() => off());
+    return this.lock.withLock(run).finally(() => {
+      off();
+      if (this.currentAbort === controller) this.currentAbort = null;
+    });
+  }
+
+  /** 中断当前正在运行的轮次；没有运行中的轮次则返回 false。 */
+  stop(): boolean {
+    if (this.currentAbort === null) return false;
+    this.currentAbort.abort();
+    return true;
   }
 
   approve(requestId: string, decision: ApprovalDecision): boolean {

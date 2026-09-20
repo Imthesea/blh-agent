@@ -272,6 +272,12 @@ async function handleApi(
     return;
   }
 
+  if (method === "POST" && pathname === "/api/stop") {
+    ctx.session.stop();
+    json(res, 200, { ok: true });
+    return;
+  }
+
   if (method === "POST" && pathname === "/api/approval") {
     const body = (await readBody(req)) as Record<string, unknown>;
     const requestId = typeof body.requestId === "string" ? body.requestId : "";

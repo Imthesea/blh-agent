@@ -179,4 +179,28 @@ describe("SessionManager", () => {
     );
     expect(() => manager.remove(tmpDir, "../etc/passwd")).toThrow("invalid session file");
   });
+
+  it("stop 在无运行轮次时返回 false", () => {
+    const manager = new SessionManager(fakeRunner(), fakeLock(), () => {}, new ApprovalCoordinator(() => {}), makeTestSessionStore());
+    manager.create(tmpDir);
+    expect(manager.stop()).toBe(false);
+  });
+
+  it("stop 触发正在运行轮次的 signal", async () => {
+    let seenSignal: AbortSignal | undefined;
+    const runner: WebTurnRunner = {
+      newSession: () => [{ role: "system", content: "sys" }],
+      runTurn: vi.fn(async (_messages, _text, _events, signal) => {
+        seenSignal = signal;
+        await new Promise<void>((resolve) => signal?.addEventListener("abort", () => resolve(), { once: true }));
+      }),
+    };
+    const manager = new SessionManager(runner, fakeLock(), () => {}, new ApprovalCoordinator(() => {}), makeTestSessionStore());
+    const handle = manager.create(tmpDir);
+    const run = manager.runTurn(handle.id, "hi");
+    await new Promise((r) => setTimeout(r, 10));
+    expect(manager.stop()).toBe(true);
+    expect(seenSignal?.aborted).toBe(true);
+    await run;
+  });
 });

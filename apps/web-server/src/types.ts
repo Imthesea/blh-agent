@@ -2,6 +2,7 @@
 export interface ChatMessage {
   role: "system" | "user" | "assistant" | "tool";
   content: string | null;
+  cancelled?: boolean;
 }
 
 /** agent 高层事件（镜像根 core/events.ts 的 AgentEvent）。 */
@@ -10,6 +11,7 @@ export type AgentEvent =
   | { type: "assistant_text_delta"; text: string }
   | { type: "tool_call"; id: string; name: string; arguments: string }
   | { type: "tool_result"; id: string; name: string; output: string; isError: boolean }
+  | { type: "turn_cancelled"; text: string }
   | { type: "turn_end" };
 
 /** 服务器推给浏览器的所有事件：复用 agent 事件 + 审批 + 错误。 */
@@ -72,7 +74,7 @@ export interface TurnLock {
 /** SessionManager 依赖的最小会话运行接口（根 Harness 满足）。 */
 export interface WebTurnRunner {
   newSession(): ChatMessage[];
-  runTurn(messages: ChatMessage[], text: string, events?: WebEventBus): Promise<void>;
+  runTurn(messages: ChatMessage[], text: string, events?: WebEventBus, signal?: AbortSignal): Promise<void>;
   sessionStore?: SessionStoreLike | undefined;
 }
 

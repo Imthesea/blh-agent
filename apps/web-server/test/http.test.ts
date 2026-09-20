@@ -282,4 +282,19 @@ describe("http 路由", () => {
       req.end(JSON.stringify({ text: "hi" }));
     });
   });
+
+  it("POST /api/stop 返回 200 ok", async () => {
+    const { server, url } = await listen(makeContext(tmpDir));
+    servers.push(server);
+    const res = await fetch(`${url}/api/stop`, { method: "POST", headers: { "x-blh-web": "1" } });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+  });
+
+  it("POST /api/stop 缺少 CSRF 头返回 403", async () => {
+    const { server, url } = await listen(makeContext(tmpDir));
+    servers.push(server);
+    const res = await fetch(`${url}/api/stop`, { method: "POST" });
+    expect(res.status).toBe(403);
+  });
 });
