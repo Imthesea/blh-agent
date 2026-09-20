@@ -439,7 +439,7 @@ describe("runTurn memory 集成", () => {
     const harness = makeHarness([], { memory, provider });
     const messages = harness.newSession();
     await harness.runTurn(messages, "what indent style do I prefer");
-    expect(messages[0]?.content).toContain("Relevant memory records:");
+    expect(messages[0]?.content).toContain("相关记忆记录：");
     expect(messages[0]?.content).toContain("Tabs not spaces.");
     expect(lastAssistantText(messages)).toBe("done");
   });

@@ -16,6 +16,8 @@ export default defineConfig({
   server: {
     port: 5173,
     host: "127.0.0.1",
+    // 前端启动时自动在默认浏览器打开页面（dev 模式下后端不负责打开浏览器）。
+    open: true,
     proxy: {
       "/api": {
         target: "http://127.0.0.1:8123",

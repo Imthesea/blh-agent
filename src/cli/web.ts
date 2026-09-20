@@ -1,7 +1,7 @@
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { startWebServer, type BuildHarness } from "@blh/web-server";
-import { buildHarness } from "./harness.js";
+import { buildHarness } from "./buildHarness.js";
 import { loadConfig } from "../core/config.js";
 import { SessionStore } from "../session/store.js";
 

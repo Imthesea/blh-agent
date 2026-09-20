@@ -5,6 +5,7 @@ dist/
 .pnpm-cache/
 .transcripts/
 .task_outputs/
+hawaii/
 .tasks/
 .memory/
 .blh/
