@@ -598,7 +598,7 @@ export class TeamRuntime implements TeammateTeam {
   }
 
   /**
-   * lead（领队）给某个活跃队友发一条消息。
+   * lead给某个活跃队友发一条消息。
    *
    * 先检查这个队友是否活跃，不活跃就返回提示；活跃就把消息发过去。
    */
@@ -690,7 +690,7 @@ export class TeamRuntime implements TeammateTeam {
   /**
    * 为某个任务创建并绑定一个"工作树"（worktree）。
    *
-   * 工作树可以理解成：给这个任务单独准备的一个独立工作目录，
+   * 给这个任务单独准备的一个独立工作目录，
    * 让任务在里面隔离地干活，互不干扰。具体逻辑交给 worktree 模块。
    */
   createWorktree(name: string, taskId: string): string {

@@ -1,8 +1,8 @@
-# M0 Foundation — TypeScript 版实施计划
+# M0 Foundation — minicc实施计划
 
 > 面向 AI 代理的工作者：必需子技能：使用 superpowers:subagent-driven-development（推荐）或 superpowers:executing-plans 逐任务实现此计划。步骤使用复选框（`- [ ]`）语法来跟踪进度。
 
-**目标：** 从零搭建 blh 的 TypeScript 版本，交付可运行的最小编码 Agent CLI：REPL / `-p` 单次对话、5 个内置工具（bash / read_file / write_file / edit_file / glob）、权限规则（PreToolUse hook 实现）、429/5xx 自动重试。
+**目标：** 从零搭建 blh 的 cc，交付可运行的最小编码 Agent CLI：REPL / `-p` 单次对话、5 个内置工具（bash / read_file / write_file / edit_file / glob）、权限规则（PreToolUse hook 实现）、429/5xx 自动重试。
 
 **架构：** CLI 层 → Harness 核心（AgentLoop + 管线编排）→ 功能域（tools/security）→ 基础层（providers/hooks/config）。权限不硬编码在 dispatch，而是作为 PreToolUse hook。
 
@@ -10,14 +10,12 @@
 
 **设计文档：** [`docs/2026-09-15-blh-claude-code-ts-design.md`](../2026-09-15-blh-claude-code-ts-design.md)
 
-**蓝本：** Python 版 `docs/plans/2026-09-13-m0-foundation.md`（行为逐字对齐；M6 特性如 dotenv/yaml 配置、Retry-After、抖动、后台任务、compaction 一律不在 M0 范围）。
-
 ---
 
 ## 通用约定（每个任务都必须遵守）
 
 1. **ESM 导入**：所有相对导入必须带 `.js` 后缀，例如 `import { loadConfig } from "../core/config.js"`。
-2. **TS 内部 camelCase，模型契约 snake_case**：工具 schema 的 `parameters` JSON、工具返回字符串、错误信息保持与 Python 版逐字一致（如 `old_text`、`path escapes workdir: ...`）。
+2. **TS 内部 camelCase，模型契约 snake_case**：工具 schema 的 `parameters` JSON、工具返回字符串、错误信息
 3. **工具签名**：
 
 ```ts
