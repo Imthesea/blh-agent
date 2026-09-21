@@ -12,7 +12,7 @@ export const DEFAULT_RULES: PermissionRule[] = [
   { tool: "bash", target: "git push --force*", action: "deny" },
   { tool: "bash", target: "rm -rf /*", action: "deny" },
   { tool: "bash", target: "*", action: "ask" },
-  { tool: "mcp__*", target: "*", action: "ask" },
+  { tool: "mcp__*", target: "*", action: "allow" },
   { tool: "connect_mcp", target: "*", action: "ask" },
   { tool: "*", target: "*", action: "allow" },
 ];

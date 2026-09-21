@@ -43,8 +43,8 @@ describe("matchRule", () => {
     expect(matchRule(rules, "read_file", "x")).toBe("deny");
   });
 
-  it("mcp_tools_ask_by_default", () => {
-    expect(matchRule(DEFAULT_RULES, "mcp__docs__search", "")).toBe("ask");
+  it("mcp_tools_allow_by_default", () => {
+    expect(matchRule(DEFAULT_RULES, "mcp__docs__search", "")).toBe("allow");
     expect(matchRule(DEFAULT_RULES, "connect_mcp", "")).toBe("ask");
   });
 });
@@ -59,7 +59,7 @@ describe("SKIP_PERMISSIONS_RULES", () => {
 
   it("keeps non-bash behavior unchanged", () => {
     expect(matchRule(SKIP_PERMISSIONS_RULES, "read_file", "x.ts")).toBe("allow");
-    expect(matchRule(SKIP_PERMISSIONS_RULES, "mcp__docs__search", "")).toBe("ask");
+    expect(matchRule(SKIP_PERMISSIONS_RULES, "mcp__docs__search", "")).toBe("allow");
     expect(matchRule(SKIP_PERMISSIONS_RULES, "connect_mcp", "")).toBe("ask");
   });
 });
