@@ -34,7 +34,8 @@
     "dev": "tsx src/cli/main.ts",
     "dev:yes": "tsx src/cli/main.ts --dangerously-skip-permissions",
     "web:server": "tsx src/cli/main.ts web --dev",
-    "web:client": "pnpm --filter @blh/web dev"
+    "web:client": "pnpm --filter @blh/web dev",
+    "web:prod": "pnpm build && pnpm build:web && tsx src/cli/main.ts web"
   },
   "dependencies": {
     "@blh/web-server": "workspace:*",

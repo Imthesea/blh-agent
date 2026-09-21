@@ -1,6 +1,7 @@
 import { PassThrough } from "node:stream";
 import readline from "node:readline";
 import { describe, it, expect, vi } from "vitest";
+import { createLogger } from "@blh/logger";
 import { repl, makeReadlineIO } from "../../src/cli/repl.js";
 import { Harness } from "../../src/core/harness.js";
 import { HookBus, PRE_TOOL_USE } from "../../src/core/hooks.js";
@@ -109,6 +110,45 @@ describe("makeReadlineIO.write", () => {
       rl.close();
     } finally {
       write.mockRestore();
+    }
+  });
+});
+
+describe("makeReadlineIO 日志清行重绘", () => {
+  it("等待输入时后台日志走清行重绘,不直接写 stderr 覆盖提示符", async () => {
+    const stdin = new PassThrough();
+    const stdout = new PassThrough();
+    const rl = readline.createInterface({ input: stdin, output: stdout });
+
+    const clearLine = vi.spyOn(readline, "clearLine").mockImplementation(() => true);
+    const cursorTo = vi.spyOn(readline, "cursorTo").mockImplementation(() => true);
+    const prompt = vi.spyOn(rl, "prompt").mockImplementation(() => {});
+    const stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    const io = makeReadlineIO(rl);
+    try {
+      // 挂起一次输入,使 awaitingInput 为 true
+      const pending = io.readLine();
+      // 等待输入期间打一条后台日志(模拟 MCP 连接完成这类异步日志)
+      createLogger("test").info("后台日志");
+
+      expect(clearLine).toHaveBeenCalled();
+      expect(cursorTo).toHaveBeenCalled();
+      expect(prompt).toHaveBeenCalled();
+      expect(stdoutWrite).toHaveBeenCalled();
+      expect(stderrWrite).not.toHaveBeenCalled();
+
+      // 结束挂起,避免遗留未 resolve 的 Promise
+      stdin.write("x\n");
+      await pending;
+    } finally {
+      clearLine.mockRestore();
+      cursorTo.mockRestore();
+      prompt.mockRestore();
+      stdoutWrite.mockRestore();
+      stderrWrite.mockRestore();
+      rl.close();
     }
   });
 });

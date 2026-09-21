@@ -89,12 +89,10 @@ pnpm web:client
 生产模式（后端直接 serve 构建后的前端，自动打开浏览器）：
 
 ```powershell
-pnpm build
-pnpm build:web
-blh web
+pnpm web:prod
 ```
 
-`blh web` 默认监听 `http://127.0.0.1:8123`，可用 `--port` 覆盖。
+`pnpm web:prod` 会依次执行 `pnpm build`、`pnpm build:web` 并以生产模式启动 Web 服务，默认监听 `http://127.0.0.1:8123`。需要改端口时用 `pnpm dev -- web --port N`。
 
 ## 运行模式
 
@@ -249,6 +247,7 @@ mcp_servers:
 | `pnpm web:client` | 启动 Web 前端（Vite dev server） |
 | `pnpm build` | tsc 构建 CLI 到 `dist/` |
 | `pnpm build:web` | 构建 Web 前端到 `dist/web/` |
+| `pnpm web:prod` | 构建 CLI + 前端并启动 Web 工作台（生产模式） |
 | `pnpm typecheck` | 类型检查（不产出） |
 | `pnpm test` | 运行 vitest 全量测试 |
 | `pnpm lint` | ESLint 检查 |

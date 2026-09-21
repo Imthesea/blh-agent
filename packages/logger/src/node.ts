@@ -38,8 +38,18 @@ export function appendRawEntry(entry: LogEntry): void {
   writeEntryToFile(entry);
 }
 
+/** 终端日志的写函数，默认直接写 stderr。CLI REPL 会注入清行重绘逻辑，避免后台日志覆盖 readline 提示符。 */
+let terminalWriter: (text: string) => void = (text) => process.stderr.write(text);
+
+/** 替换终端日志写函数（返回旧函数，便于调用方在退出时还原）。 */
+export function setTerminalWriter(writer: (text: string) => void): (text: string) => void {
+  const previous = terminalWriter;
+  terminalWriter = writer;
+  return previous;
+}
+
 function terminalSink(): LogSink {
-  return { write: (entry) => process.stderr.write(formatTerminal(entry) + "\n") };
+  return { write: (entry) => terminalWriter(formatTerminal(entry) + "\n") };
 }
 
 function fileSink(): LogSink {

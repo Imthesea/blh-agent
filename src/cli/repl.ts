@@ -4,6 +4,7 @@ import type { TeamAgents } from "../core/harness.js";
 import type { JobsRuntime } from "../jobs/runtime.js";
 import type { GoalController } from "../goals/controller.js";
 import { EventBus, type AgentEvent } from "../core/events.js";
+import { setTerminalWriter } from "@blh/logger";
 
 /** /goal 命令的解析结果："status" 查看 / "clear" 清除 / "set" 设置 / null 不是 goal 命令。 */
 export type GoalCommand = "status" | "clear" | "set" | null;
@@ -97,6 +98,18 @@ export function makeReadlineIO(rl?: readline.Interface): ReplIO {
     });
   // 标记当前是否正挂着 readline.question 等用户输入（即屏幕上显示着 "> " 提示符）。
   let awaitingInput = false;
+  // 让日志系统的终端输出也接入「等待输入时清行重绘」，避免后台日志（如 MCP 连接完成）覆盖 "> " 提示符。
+  // 非等待输入时仍写 stderr，保持日志原有语义。
+  setTerminalWriter((text) => {
+    if (awaitingInput) {
+      readline.clearLine(process.stdout, 0);
+      readline.cursorTo(process.stdout, 0);
+      process.stdout.write(text);
+      readlineInterface.prompt(true);
+    } else {
+      process.stderr.write(text);
+    }
+  });
   return {
     readLine: () =>
       new Promise((resolve) => {

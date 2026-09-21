@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { startWebServer, type BuildHarness } from "@blh/web-server";
@@ -12,11 +13,15 @@ const buildHarnessForWeb: BuildHarness = (deps) =>
     persistRule: deps.persistRule,
   });
 
-/** 生产模式下前端静态目录：dist/cli/main.js → ../web = dist/web；dev 返回 null（Vite 提供）。 */
+/** 生产模式下前端静态目录；dev 返回 null（Vite 提供）。 */
 function staticDir(dev: boolean): string | null {
   if (dev) return null;
   const here = path.dirname(fileURLToPath(import.meta.url));
-  return path.resolve(here, "..", "web");
+  // 构建后运行：dist/cli/web.js → ../web = dist/web。
+  const built = path.resolve(here, "..", "web");
+  if (existsSync(built)) return built;
+  // 源码运行（tsx src/cli/web.ts）：import.meta.url 指向 src/cli，退回工作目录下的 dist/web。
+  return path.resolve(process.cwd(), "dist", "web");
 }
 
 export interface StartWebFromCliOptions {
