@@ -176,4 +176,49 @@ describe("loadConfig file/cli", () => {
     const { loadConfig, ConfigError } = await import("../../src/core/config.js");
     expect(() => loadConfig()).toThrow(ConfigError);
   });
+
+  it("解析 mcp_servers（stdio 与 http 两种）", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "sk-test");
+    writeFileSync(
+      path.join(tmpDir, ".blh.yaml"),
+      [
+        "mcp_servers:",
+        "  - name: web-search",
+        "    command: npx",
+        '    args: ["-y", "open-websearch@latest"]',
+        "  - name: hotel",
+        "    url: https://mcp.example.com/mcp",
+        "    headers:",
+        "      Authorization: Bearer abc",
+        "",
+      ].join("\n"),
+    );
+    const { loadConfig } = await import("../../src/core/config.js");
+    const config = loadConfig();
+    expect(config.mcpServers).toEqual([
+      { name: "web-search", command: "npx", args: ["-y", "open-websearch@latest"] },
+      { name: "hotel", url: "https://mcp.example.com/mcp", headers: { Authorization: "Bearer abc" } },
+    ]);
+  });
+
+  it("mcp_servers 不是数组时抛 ConfigError", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "sk-test");
+    writeFileSync(path.join(tmpDir, ".blh.yaml"), "mcp_servers: not-an-array\n");
+    const { loadConfig, ConfigError } = await import("../../src/core/config.js");
+    expect(() => loadConfig()).toThrow(ConfigError);
+  });
+
+  it("mcp_servers 某项缺少 name 时抛 ConfigError", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "sk-test");
+    writeFileSync(path.join(tmpDir, ".blh.yaml"), "mcp_servers:\n  - command: npx\n");
+    const { loadConfig, ConfigError } = await import("../../src/core/config.js");
+    expect(() => loadConfig()).toThrow(ConfigError);
+  });
+
+  it("未配置 mcp_servers 时返回空数组", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "sk-test");
+    const { loadConfig } = await import("../../src/core/config.js");
+    const config = loadConfig();
+    expect(config.mcpServers).toEqual([]);
+  });
 });

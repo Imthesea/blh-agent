@@ -3,7 +3,7 @@ import { parse as parseYaml } from "yaml";
 import { readFileSync, statSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { Config } from "./types.js";
+import type { Config, McpServerConfig } from "./types.js";
 import { createLogger } from "@blh/logger";
 
 const log = createLogger("core.config");
@@ -74,6 +74,32 @@ function toInt(value: unknown, key: string): number {
   return number;
 }
 
+/** 解析 mcp_servers 配置项：校验是数组，逐项转成 McpServerConfig。空值返回空数组。 */
+function parseMcpServers(value: unknown): McpServerConfig[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) {
+    throw new ConfigError(`mcp_servers 必须是数组: ${JSON.stringify(value)}`);
+  }
+  return value.map((item, index) => {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) {
+      throw new ConfigError(`mcp_servers[${index}] 必须是对象`);
+    }
+    const obj = item as Record<string, unknown>;
+    const name = typeof obj.name === "string" ? obj.name : "";
+    if (!name) throw new ConfigError(`mcp_servers[${index}] 缺少 name`);
+    const server: McpServerConfig = { name };
+    if (typeof obj.command === "string") server.command = obj.command;
+    if (Array.isArray(obj.args)) server.args = obj.args.map((a) => String(a));
+    if (typeof obj.url === "string") server.url = obj.url;
+    if (obj.headers && typeof obj.headers === "object" && !Array.isArray(obj.headers)) {
+      server.headers = Object.fromEntries(
+        Object.entries(obj.headers as Record<string, unknown>).map(([k, v]) => [k, String(v)]),
+      );
+    }
+    return server;
+  });
+}
+
 /** 加载最终配置：按「命令行 > 环境变量 > 配置文件 > 默认值」的优先级合并，并校验 API key、超时等关键项。 */
 export function loadConfig(workdir?: string, cli?: Record<string, unknown>): Config {
   const dotenv = findDotenv(process.cwd());
@@ -121,6 +147,8 @@ export function loadConfig(workdir?: string, cli?: Record<string, unknown>): Con
     get("max_output_chars", "BLH_MAX_OUTPUT_CHARS", 30000),
     "max_output_chars",
   );
+  // MCP 服务器列表只能写在配置文件里（结构复杂，不适合用环境变量或命令行传）。
+  const mcpServers = parseMcpServers(get("mcp_servers", undefined, undefined));
 
   return {
     apiKey,
@@ -129,5 +157,6 @@ export function loadConfig(workdir?: string, cli?: Record<string, unknown>): Con
     workdir: workdirValue,
     bashTimeout,
     maxOutputChars,
+    mcpServers,
   };
 }

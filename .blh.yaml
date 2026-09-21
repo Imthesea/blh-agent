@@ -1,0 +1,13 @@
+# 启动时自动连接的 MCP 服务器列表。
+# 每项二选一：本地 stdio（command + args）或远程 HTTP（url + headers）。
+
+mcp_servers:
+  # 查天气（本地 stdio）
+  - name: weather
+    command: npx
+    args: ["-y", "@dangahagan/weather-mcp@latest"]
+
+  # 联网搜索（本地 stdio）
+  - name: web-search
+    command: npx
+    args: ["-y", "open-websearch@latest"]

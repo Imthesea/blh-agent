@@ -44,6 +44,15 @@ export interface ToolDefinition {
   handler: ToolHandler;
 }
 
+/** 配置文件里声明的单个 MCP 服务器：本地 stdio（command+args）或远程 HTTP（url+headers）二选一 */
+export interface McpServerConfig {
+  name: string;
+  command?: string;
+  args?: string[];
+  url?: string;
+  headers?: Record<string, string>;
+}
+
 /** 运行配置：模型、工作目录、bash 超时和输出长度上限等 */
 export interface Config {
   apiKey: string;
@@ -52,6 +61,8 @@ export interface Config {
   workdir: string;
   bashTimeout: number;
   maxOutputChars: number;
+  /** 启动时自动连接的 MCP 服务器列表（来自配置文件的 mcp_servers） */
+  mcpServers?: McpServerConfig[];
 }
 
 export interface ChatProvider {

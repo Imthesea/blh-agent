@@ -29,6 +29,7 @@ import { TeamRuntime } from "../agents/team.js";
 import { registerAgentTools } from "../agents/tools.js";
 import { SkillLoader } from "../extensions/skills.js";
 import { MCPRegistry } from "../extensions/mcp.js";
+import type { McpServerConfig } from "../core/types.js";
 import { registerExtensionTools } from "../extensions/tools.js";
 import { Extensions } from "../extensions/index.js";
 import { PromptGoalEvaluator } from "../goals/evaluator.js";
@@ -36,7 +37,19 @@ import { GoalController } from "../goals/controller.js";
 import { OpenAIWorkflowRunner } from "../workflow/runtime.js";
 import { WORKFLOWS } from "../workflow/registry.js";
 import { registerWorkflowTools } from "../workflow/tools.js";
-import { initLogger } from "@blh/logger";
+import { initLogger, createLogger } from "@blh/logger";
+
+const log = createLogger("cli.buildHarness");
+
+/** 连接配置里声明的一个 MCP 服务器，把结果打到日志里（供启动时后台自动连接使用）。 */
+async function connectConfiguredMcp(mcp: MCPRegistry, server: McpServerConfig): Promise<void> {
+  const result = server.url
+    ? await mcp.connectHttp(server.name, server.url, server.headers)
+    : server.command
+      ? await mcp.connect(server.name, server.command, server.args)
+      : `Error: MCP server '${server.name}' has neither url nor command`;
+  log.info(result);
+}
 
 /**
  * 构建一个完整的 Harness（运行核心），把 CLI 用到的所有子系统按依赖顺序组装起来。
@@ -145,6 +158,10 @@ export function buildHarness(
   const mcp = new MCPRegistry(tools, config.workdir);
   // 注册扩展相关工具：让模型能调用技能和 MCP 提供的能力。
   registerExtensionTools(tools, skills, mcp);
+  // 启动时自动连接配置文件里声明的 MCP 服务器（后台进行，不阻塞启动流程）。
+  for (const server of config.mcpServers ?? []) {
+    void connectConfiguredMcp(mcp, server);
+  }
 
   // 创建扩展聚合对象：把技能和 MCP 包装成统一入口，方便 Harness 使用。
   const extensions = new Extensions(skills, mcp);

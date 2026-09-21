@@ -1,7 +1,59 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+// —— 启动时自动连接 MCP 的 HTTP 测试辅助 ——
+
+// 读一个 HTTP 请求的 body，解析成 JSON 对象。
+async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+  let raw = "";
+  for await (const chunk of req) raw += chunk;
+  return JSON.parse(raw);
+}
+
+// 在本地起一个 HTTP 服务器，返回它的 URL 和关闭函数。
+function startHttpServer(
+  handler: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>,
+): Promise<{ url: string; close: () => Promise<void> }> {
+  return new Promise((resolve) => {
+    const server = createServer((req, res) => {
+      void handler(req, res);
+    });
+    server.listen(0, "127.0.0.1", () => {
+      const addr = server.address();
+      if (addr === null || typeof addr === "string") throw new Error("unexpected server address");
+      resolve({
+        url: `http://127.0.0.1:${addr.port}/mcp`,
+        close: () => new Promise((r) => server.close(() => r())),
+      });
+    });
+  });
+}
+
+// 模拟新版协议 HTTP MCP 服务器：discover 支持 2026-07-28，tools/list 返回一个 search 工具。
+function modernHttpHandler(): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
+  return async (req, res) => {
+    const body = await readBody(req);
+    const id = body.id as number;
+    const method = body.method as string;
+    let result: unknown;
+    if (method === "server/discover") {
+      result = { supportedVersions: ["2026-07-28"], capabilities: { tools: {} } };
+    } else if (method === "tools/list") {
+      result = {
+        tools: [
+          { name: "search", description: "Search.", inputSchema: { type: "object", properties: {} } },
+        ],
+      };
+    } else {
+      result = {};
+    }
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ jsonrpc: "2.0", id, result }));
+  };
+}
 
 describe("buildHarness 装配", () => {
   let tmpDir: string;
@@ -106,6 +158,31 @@ describe("buildHarness 装配", () => {
     expect(harness.goal).toBeDefined();
     expect(harness.workflow).toBe(path.join(tmpDir, ".workflow_runtime"));
     expect(harness.tools.list().map((tool) => tool.name)).toContain("run_workflow");
+  });
+
+  it("启动时自动连接配置文件里声明的 HTTP MCP 服务器", async () => {
+    const originalCwd = process.cwd();
+    const server = await startHttpServer(modernHttpHandler());
+    try {
+      process.chdir(tmpDir);
+      writeFileSync(
+        path.join(tmpDir, ".blh.yaml"),
+        ["mcp_servers:", "  - name: fakehttp", `    url: ${server.url}`, ""].join("\n"),
+      );
+      const { buildHarness } = await import("../../src/cli/main.js");
+      const harness = buildHarness(tmpDir);
+      // 连接是后台异步进行的，轮询等待工具注册完成。
+      const toolName = "mcp__fakehttp__search";
+      const deadline = Date.now() + 8000;
+      while (!harness.tools.list().some((tool) => tool.name === toolName)) {
+        if (Date.now() > deadline) throw new Error("MCP 工具未在超时内自动注册");
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      expect(harness.tools.list().map((tool) => tool.name)).toContain(toolName);
+    } finally {
+      await server.close();
+      process.chdir(originalCwd);
+    }
   });
 });
 
