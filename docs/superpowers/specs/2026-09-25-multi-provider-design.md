@@ -111,7 +111,8 @@ export function createProvider(config: Config): ChatProvider {
 ## 8. 配置与 CLI
 
 - 新增 `--provider` 参数（`values.provider` → `cli.provider`）。
-- `loadConfig`：先解析 `provider`，再据此解析 `model`（缺省用 `def.defaultModel`）、`baseUrl`（缺省用 `def.baseUrl`）、`apiKey`（缺省用 `def.apiKeyEnv` 依次查）。
+- `loadConfig`：先解析 `provider`，再据此解析 `model`（缺省用 `def.defaultModel`）、`baseUrl`（缺省用 `def.baseUrl`）。
+- `loadConfig` 里的 `apiKey` 只从配置文件 `api_key` 字段读取（可为空字符串）；环境变量 key 的读取交给 `createProvider` 的 `resolveApiKey`（按 `def.apiKeyEnv` 顺序），避免 config 层硬编码某一家厂商的 env 名。
 - 移除「硬编码 `gpt-4o-mini` 默认模型」和「只认 `OPENAI_API_KEY`」的逻辑；缺 key 时报错并**列明该设置哪个环境变量**。
 - 更新 `.env.example`、`USAGE` 帮助文案。
 
