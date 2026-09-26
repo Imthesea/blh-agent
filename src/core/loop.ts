@@ -23,9 +23,9 @@ export { parseToolArguments };
 /** 提示词过长时，允许「被动压缩后重试」的最大次数 */
 const MAX_REACTIVE_RETRIES = 1;
 
-/** 从后往前找最后一条 assistant 消息，返回它的文本内容；没有则返回空串 */
-export function lastAssistantText(messages: ChatMessage[]): string {
-  for (let i = messages.length - 1; i >= 0; i--) {
+/** 从后往前找最后一条 assistant 消息，返回它的文本内容；没有则返回空串。start 限定扫描起点下标（只取本轮新增）。 */
+export function lastAssistantText(messages: ChatMessage[], start = 0): string {
+  for (let i = messages.length - 1; i >= start; i--) {
     const message = messages[i];
     if (message?.role === "assistant" && message.content) return message.content;
   }

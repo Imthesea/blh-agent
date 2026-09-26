@@ -1,4 +1,5 @@
 import type { ProviderDefinition, ProviderId } from "../core/types.js";
+import { readEnv } from "../core/env.js";
 
 /** 内置 provider 描述表。catalog 顺序 = 自动检测优先级（deepseek 第一保证老用户升级不变）。 */
 const builtin: ProviderDefinition[] = [
@@ -58,10 +59,5 @@ export function registerProvider(def: ProviderDefinition): void {
 
 /** 按注册顺序返回第一个「apiKeyEnv 里有非空环境变量」的 provider；都没有则 undefined。 */
 export function findFirstConfiguredProvider(): ProviderDefinition | undefined {
-  return providers.find((def) =>
-    def.apiKeyEnv.some((env) => {
-      const value = process.env[env];
-      return value !== undefined && value !== "";
-    }),
-  );
+  return providers.find((def) => def.apiKeyEnv.some((env) => readEnv(env) !== undefined));
 }

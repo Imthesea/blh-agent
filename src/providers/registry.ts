@@ -1,5 +1,6 @@
 import type { ChatProvider, Config, ProviderDefinition } from "../core/types.js";
 import { getProviderDefinition } from "./catalog.js";
+import { readEnv } from "../core/env.js";
 import { OpenAICompatProvider } from "./openai-compat.js";
 import { AnthropicProvider } from "./anthropic.js";
 
@@ -7,8 +8,8 @@ import { AnthropicProvider } from "./anthropic.js";
 export function resolveApiKey(config: Config, def: ProviderDefinition): string {
   if (config.apiKey) return config.apiKey;
   for (const env of def.apiKeyEnv) {
-    const value = process.env[env];
-    if (value !== undefined && value !== "") return value;
+    const value = readEnv(env);
+    if (value !== undefined) return value;
   }
   return "";
 }

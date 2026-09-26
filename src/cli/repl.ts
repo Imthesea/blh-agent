@@ -4,6 +4,7 @@ import type { TeamAgents } from "../core/harness.js";
 import type { JobsRuntime } from "../jobs/runtime.js";
 import type { GoalController } from "../goals/controller.js";
 import { EventBus, type AgentEvent } from "../core/events.js";
+import { lastAssistantText } from "../core/loop.js";
 import { setTerminalWriter } from "@blh/logger";
 
 /** /goal 命令的解析结果："status" 查看 / "clear" 清除 / "set" 设置 / null 不是 goal 命令。 */
@@ -37,15 +38,6 @@ export interface ReplIO {
   print: (text: string) => void;
   /** 写文本但不换行（用于流式输出模型回复的片段）。 */
   write: (text: string) => void;
-}
-
-/** 从 start 起向队尾找最后一条 assistant 文本，只取本轮新增，避免打印 scheduled 旧回复。 */
-function lastAssistantTextFrom(messages: ChatMessage[], start: number): string {
-  for (let i = messages.length - 1; i >= start; i--) {
-    const message = messages[i];
-    if (message?.role === "assistant" && message.content) return message.content;
-  }
-  return "";
 }
 
 /** 把一条高层事件渲染到终端：文本增量原样写，工具/轮次边界换行。 */
@@ -176,7 +168,7 @@ export async function repl(
       jobs.setCronTurn(async () => {
         const before = messages.length;
         await runScheduledTurn(messages);
-        const reply = lastAssistantTextFrom(messages, before);
+        const reply = lastAssistantText(messages, before);
         if (reply) io.print(reply);
       });
       // 启动定时调度。
@@ -187,7 +179,7 @@ export async function repl(
       agents.setTeamTurn?.(async () => {
         const before = messages.length;
         await runTeamTurn(messages);
-        const reply = lastAssistantTextFrom(messages, before);
+        const reply = lastAssistantText(messages, before);
         if (reply) io.print(reply);
       });
       agents.start?.();
@@ -247,7 +239,7 @@ export async function repl(
             off();
           }
           // 如果没有走流式输出（比如没收到任何文本增量事件），就直接打印最后一条回复兜底。
-          if (!streamed) io.print(lastAssistantTextFrom(messages, turnStart));
+          if (!streamed) io.print(lastAssistantText(messages, turnStart));
         };
         // 有后台任务运行时，用锁串行执行本轮，避免和定时/团队任务并发冲突。
         if (jobs !== undefined) {

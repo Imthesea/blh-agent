@@ -6,6 +6,7 @@ import * as path from "node:path";
 import type { Config, McpServerConfig, ProviderDefinition } from "./types.js";
 import { createLogger } from "@blh/logger";
 import { loadSettings, saveSettings, type Settings } from "./settings.js";
+import { readEnv } from "./env.js";
 import { getProviderDefinition, findFirstConfiguredProvider } from "../providers/catalog.js";
 
 const log = createLogger("core.config");
@@ -114,19 +115,11 @@ function loadMcpServers(start: string): McpServerConfig[] {
 }
 
 function providerHasKey(def: ProviderDefinition): boolean {
-  return def.apiKeyEnv.some((env) => {
-    const value = process.env[env];
-    return value !== undefined && value !== "";
-  });
+  return def.apiKeyEnv.some((env) => readEnv(env) !== undefined);
 }
 
 function stringOrUndefined(value: unknown): string | undefined {
   return typeof value === "string" && value !== "" ? value : undefined;
-}
-
-function envOrUndefined(name: string): string | undefined {
-  const value = process.env[name];
-  return value !== undefined && value !== "" ? value : undefined;
 }
 
 /** 加载最终配置：provider/model 多级解析，配置目录 ~/.blh/ + .blh/，MCP 拆到 mcp.yaml。 */
@@ -154,7 +147,7 @@ export function loadConfig(workdir?: string, cli?: Record<string, unknown>): Con
 
   // provider 解析：CLI > BLH_PROVIDER > file > settings 记忆(有 key) > 自动检测 > deepseek
   const explicitProvider =
-    stringOrUndefined(cliValues.provider) ?? envOrUndefined("BLH_PROVIDER") ?? stringOrUndefined(fileValues.provider);
+    stringOrUndefined(cliValues.provider) ?? readEnv("BLH_PROVIDER") ?? stringOrUndefined(fileValues.provider);
   const settings = loadSettings();
   let providerId = explicitProvider;
   if (!providerId && settings.provider) {
@@ -170,14 +163,14 @@ export function loadConfig(workdir?: string, cli?: Record<string, unknown>): Con
 
   // model 解析：CLI > OPENAI_MODEL > file > settings 记忆(同 provider 时) > defaultModel
   const explicitModel =
-    stringOrUndefined(cliValues.model) ?? envOrUndefined("OPENAI_MODEL") ?? stringOrUndefined(fileValues.model);
+    stringOrUndefined(cliValues.model) ?? readEnv("OPENAI_MODEL") ?? stringOrUndefined(fileValues.model);
   let model = explicitModel;
   if (!model && providerId === settings.provider && settings.model) model = settings.model;
   if (!model) model = def.defaultModel;
 
   // baseUrl 解析：CLI > OPENAI_BASE_URL > file > def.baseUrl
   const baseUrl =
-    stringOrUndefined(cliValues.base_url) ?? envOrUndefined("OPENAI_BASE_URL") ?? stringOrUndefined(fileValues.base_url) ?? def.baseUrl;
+    stringOrUndefined(cliValues.base_url) ?? readEnv("OPENAI_BASE_URL") ?? stringOrUndefined(fileValues.base_url) ?? def.baseUrl;
 
   // apiKey 只从 file（环境变量 key 交给 createProvider 按 def.apiKeyEnv 解析）
   const apiKey = stringOrUndefined(fileValues.api_key) ?? "";
@@ -194,9 +187,9 @@ export function loadConfig(workdir?: string, cli?: Record<string, unknown>): Con
   }
 
   const workdirValue = String(workdir ?? process.cwd());
-  const bashTimeout = toInt(cliValues.bash_timeout ?? envOrUndefined("BLH_BASH_TIMEOUT") ?? fileValues.bash_timeout ?? 120, "bash_timeout");
+  const bashTimeout = toInt(cliValues.bash_timeout ?? readEnv("BLH_BASH_TIMEOUT") ?? fileValues.bash_timeout ?? 120, "bash_timeout");
   const maxOutputChars = toInt(
-    cliValues.max_output_chars ?? envOrUndefined("BLH_MAX_OUTPUT_CHARS") ?? fileValues.max_output_chars ?? 30000,
+    cliValues.max_output_chars ?? readEnv("BLH_MAX_OUTPUT_CHARS") ?? fileValues.max_output_chars ?? 30000,
     "max_output_chars",
   );
 
