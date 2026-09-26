@@ -4,7 +4,7 @@ import { ContextCompactor } from "../compaction/compactor.js";
 import { registerCompactTool } from "../compaction/compactTool.js";
 import { Harness } from "../core/harness.js";
 import { HookBus, PRE_TOOL_USE } from "../core/hooks.js";
-import { OpenAICompatProvider } from "../providers/openai-compat.js";
+import { createProvider } from "../providers/registry.js";
 import { ToolRegistry } from "../tools/registry.js";
 import { registerBuiltinTools } from "../tools/index.js";
 import {
@@ -81,8 +81,8 @@ export function buildHarness(
   // 初始化日志系统：让后续所有日志都写入工作目录下统一管理。
   initLogger(config.workdir);
 
-  // 创建模型提供者：负责真正调用 OpenAI 接口（这是所有「用模型」能力的底层）。
-  const provider = new OpenAICompatProvider(config);
+  // 创建模型提供者：按 config.provider 走对应厂商适配器（这是所有「用模型」能力的底层）。
+  const provider = createProvider(config);
 
   // 创建工具注册表：集中登记所有可供模型调用的工具。
   const tools = new ToolRegistry();

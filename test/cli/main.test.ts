@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -165,9 +165,10 @@ describe("buildHarness 装配", () => {
     const server = await startHttpServer(modernHttpHandler());
     try {
       process.chdir(tmpDir);
+      mkdirSync(path.join(tmpDir, ".blh"), { recursive: true });
       writeFileSync(
-        path.join(tmpDir, ".blh.yaml"),
-        ["mcp_servers:", "  - name: fakehttp", `    url: ${server.url}`, ""].join("\n"),
+        path.join(tmpDir, ".blh", "mcp.yaml"),
+        ["- name: fakehttp", `  url: ${server.url}`, ""].join("\n"),
       );
       const { buildHarness } = await import("../../src/cli/main.js");
       const harness = buildHarness(tmpDir);
