@@ -8,7 +8,8 @@ dist/
 hawaii/
 .tasks/
 .memory/
-.blh/
+.blh/*
+!.blh/mcp.yaml
 .scheduled_tasks.json
 .mailboxes/
 .worktrees/
