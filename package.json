@@ -38,8 +38,9 @@
     "web:prod": "pnpm build && pnpm build:web && tsx src/cli/main.ts web"
   },
   "dependencies": {
-    "@blh/web-server": "workspace:*",
+    "@anthropic-ai/sdk": "^0.128.0",
     "@blh/logger": "workspace:*",
+    "@blh/web-server": "workspace:*",
     "dotenv": "^16.0.0",
     "openai": "^4.77.0",
     "yaml": "^2.9.1"
