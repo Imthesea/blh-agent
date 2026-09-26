@@ -200,6 +200,13 @@ describe("parseCliArgs", () => {
     expect(parsed.workdir).toBeUndefined();
   });
 
+  it("parses --provider flag", async () => {
+    const { parseCliArgs } = await import("../../src/cli/main.js");
+    const parsed = parseCliArgs(["--provider", "anthropic", "--model", "claude-x"]);
+    expect(parsed.cli.provider).toBe("anthropic");
+    expect(parsed.cli.model).toBe("claude-x");
+  });
+
   it("parses workdir/timeout/max-output flags", async () => {
     const { parseCliArgs } = await import("../../src/cli/main.js");
     const parsed = parseCliArgs([

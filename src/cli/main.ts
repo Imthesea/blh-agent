@@ -60,6 +60,7 @@ export function parseCliArgs(argv: string[]): ParsedCliArgs {
       print: { type: "string", short: "p" },
       model: { type: "string" },
       "base-url": { type: "string" },
+      provider: { type: "string" },
       workdir: { type: "string" },
       "bash-timeout": { type: "string" },
       "max-output-chars": { type: "string" },
@@ -72,6 +73,7 @@ export function parseCliArgs(argv: string[]): ParsedCliArgs {
 
   const model = stringValue(values, "model");
   const baseUrl = stringValue(values, "base-url");
+  const provider = stringValue(values, "provider");
   const bashTimeout = stringValue(values, "bash-timeout");
   const maxOutputChars = stringValue(values, "max-output-chars");
   const workdirValue = stringValue(values, "workdir");
@@ -88,6 +90,7 @@ export function parseCliArgs(argv: string[]): ParsedCliArgs {
   const cli: Record<string, string> = {};
   if (model !== undefined) cli.model = model;
   if (baseUrl !== undefined) cli.base_url = baseUrl;
+  if (provider !== undefined) cli.provider = provider;
   if (bashTimeout !== undefined) cli.bash_timeout = bashTimeout;
   if (maxOutputChars !== undefined) cli.max_output_chars = maxOutputChars;
   if (workdirValue !== undefined) cli.workdir = workdirValue;
@@ -131,7 +134,7 @@ function openBrowser(url: string): void {
   exec(command, () => {});
 }
 
-const USAGE = `用法: blh [-h] [-p 提示词] [--model 模型] [--base-url 基础地址]
+const USAGE = `用法: blh [-h] [-p 提示词] [--provider 厂商] [--model 模型] [--base-url 基础地址]
             [--workdir 工作目录] [--bash-timeout 超时秒数]
             [--max-output-chars 最大输出字符数]
             [--dangerously-skip-permissions]
@@ -139,6 +142,7 @@ const USAGE = `用法: blh [-h] [-p 提示词] [--model 模型] [--base-url 基�
 编程智能体命令行工具 (TypeScript)
 
 选项:
+  --provider 厂商         provider id（deepseek/anthropic/qwen/kimi；默认 deepseek）
   -p, --print 提示词      跑一次单个提示词并打印回复
   --model 模型            模型名（覆盖 OPENAI_MODEL）
   --base-url 基础地址     OpenAI 兼容的基础地址（覆盖 OPENAI_BASE_URL）
