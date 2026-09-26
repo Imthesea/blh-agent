@@ -1,3 +1,19 @@
+/** 可插拔 provider 的唯一标识（内置 deepseek/anthropic/qwen/kimi，也允许自定义字符串）。 */
+export type ProviderId = string;
+
+/** provider 底层走的 API 协议：openai 兼容 or 原生 anthropic。 */
+export type ProviderApi = "openai" | "anthropic";
+
+/** 一个 provider 的静态描述：谁（id/name）+ 怎么（api）+ 默认连接参数。 */
+export interface ProviderDefinition {
+  id: ProviderId;
+  name: string;
+  api: ProviderApi;
+  baseUrl: string;
+  apiKeyEnv: string[];
+  defaultModel: string;
+}
+
 /** 一次工具调用的描述：模型想调用哪个函数、传什么参数 */
 export interface ToolCall {
   id: string;
@@ -58,6 +74,8 @@ export interface Config {
   apiKey: string;
   baseUrl?: string;
   model: string;
+  /** provider id（deepseek/anthropic/qwen/kimi…）；loadConfig 必填，测试替身可省略由 createProvider 兜底 deepseek */
+  provider?: string;
   workdir: string;
   bashTimeout: number;
   maxOutputChars: number;
@@ -68,6 +86,8 @@ export interface Config {
 export interface ChatProvider {
   chat(messages: ChatMessage[], tools: ToolDefinition[], maxTokens?: number, signal?: AbortSignal): Promise<ChatMessage>;
   stream?(messages: ChatMessage[], tools: ToolDefinition[], maxTokens?: number, signal?: AbortSignal): AsyncIterable<ProviderStreamEvent>;
+  /** 无 tools 单轮并返回 usage（供 workflow 记账）。可选：未实现时 workflow 不可用。 */
+  chatCompletion?(messages: ChatMessage[], maxTokens?: number): Promise<{ message: ChatMessage; usage: ChatUsage }>;
 }
 
 /** 一次 LLM 调用的 token 用量 */

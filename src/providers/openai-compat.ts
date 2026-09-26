@@ -65,7 +65,7 @@ function fromOpenAIMessage(message: OpenAI.ChatCompletionMessage): ChatMessage {
   };
 }
 
-export class OpenAIProvider implements ChatProvider {
+export class OpenAICompatProvider implements ChatProvider {
   private readonly client: ChatCompletionsClient;
 
   constructor(
@@ -221,22 +221,4 @@ export class OpenAIProvider implements ChatProvider {
     };
     yield { type: "done", message, ...(usage ? { usage } : {}) };
   }
-}
-
-const PROMPT_TOO_LONG_KEYWORDS = [
-  "prompt_too_long",
-  "too many tokens",
-  "context length",
-  "context_length_exceeded",
-  "maximum context",
-  "reduce the length",
-] as const;
-
-/** 启发式判定上下文超长：HTTP 400 + 错误体关键词（各兼容端格式不一） */
-export function isPromptTooLong(error: unknown): boolean {
-  if (!(error instanceof Error) || !("status" in error)) return false;
-  const status = (error as Error & { status: unknown }).status;
-  if (status !== 400 && status !== 413 && status !== 422) return false;
-  const text = error.message.toLowerCase();
-  return PROMPT_TOO_LONG_KEYWORDS.some((keyword) => text.includes(keyword));
 }

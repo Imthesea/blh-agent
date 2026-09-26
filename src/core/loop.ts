@@ -2,7 +2,7 @@ import type { ChatMessage, ChatProvider, ToolCall, ToolDefinition } from "./type
 import type { Harness } from "./harness.js";
 import type { EventBus } from "./events.js";
 import { PRE_TOOL_USE, POST_TOOL_USE } from "./hooks.js";
-import { isPromptTooLong } from "../providers/openai.js";
+import { isPromptTooLong } from "../providers/errors.js";
 import type { GoalController } from "../goals/controller.js";
 import type { StopDecision } from "../goals/types.js";
 import { createLogger } from "@blh/logger";

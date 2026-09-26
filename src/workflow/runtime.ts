@@ -1,7 +1,7 @@
 /** workflow 运行时:runner、budget、ExecutionState 编排原语。 */
 import { MISS, SimpleJsonSchema, WorkflowInputError, stableHash, parseRunnerJson, stableStringify, type JsonSchema } from "./schema.js";
 import type { WorkflowJournal } from "./journal.js";
-import type { OpenAIProvider } from "../providers/openai.js";
+import type { OpenAICompatProvider } from "../providers/openai-compat.js";
 
 export const AGENT_CAP = 1000;
 export const CONCURRENCY = 8;
@@ -54,7 +54,7 @@ class Semaphore {
 
 /** workflow 子 agent:无 tools 单轮,复用 host 的 OpenAI provider,拿 usage 记账。 */
 export class OpenAIWorkflowRunner implements WorkflowRunner {
-  constructor(readonly provider: OpenAIProvider) {}
+  constructor(readonly provider: OpenAICompatProvider) {}
 
   async run(prompt: string, schema?: JsonSchema, _label?: string): Promise<RunnerOutput> {
     let request = prompt;
