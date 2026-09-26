@@ -111,8 +111,8 @@ describe("OpenAICompatProvider", () => {
     );
     const provider = new OpenAICompatProvider(config, makeClient(create));
     const controller = new AbortController();
-    for await (const _ of provider.stream!([{ role: "user", content: "hi" }], [], undefined, controller.signal)) {
-      /* 消费完 */
+    for await (const event of provider.stream!([{ role: "user", content: "hi" }], [], undefined, controller.signal)) {
+      void event; // 消费完即可
     }
     expect(create).toHaveBeenCalledWith(expect.anything(), {
       timeout: 600_000,
