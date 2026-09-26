@@ -1,7 +1,7 @@
 /** workflow 运行时:runner、budget、ExecutionState 编排原语。 */
 import { MISS, SimpleJsonSchema, WorkflowInputError, stableHash, parseRunnerJson, stableStringify, type JsonSchema } from "./schema.js";
 import type { WorkflowJournal } from "./journal.js";
-import type { OpenAICompatProvider } from "../providers/openai-compat.js";
+import type { ChatProvider } from "../core/types.js";
 
 export const AGENT_CAP = 1000;
 export const CONCURRENCY = 8;
@@ -52,9 +52,16 @@ class Semaphore {
   }
 }
 
-/** workflow 子 agent:无 tools 单轮,复用 host 的 OpenAI provider,拿 usage 记账。 */
+/** workflow 子 agent:无 tools 单轮,复用 host 的 provider,拿 usage 记账。 */
 export class OpenAIWorkflowRunner implements WorkflowRunner {
-  constructor(readonly provider: OpenAICompatProvider) {}
+  private readonly chatCompletion: NonNullable<ChatProvider["chatCompletion"]>;
+
+  constructor(readonly provider: ChatProvider) {
+    if (!provider.chatCompletion) {
+      throw new Error("OpenAIWorkflowRunner 需要支持 chatCompletion 的 provider");
+    }
+    this.chatCompletion = provider.chatCompletion.bind(provider);
+  }
 
   async run(prompt: string, schema?: JsonSchema, _label?: string): Promise<RunnerOutput> {
     let request = prompt;
@@ -63,7 +70,7 @@ export class OpenAIWorkflowRunner implements WorkflowRunner {
         "\n\nReturn only one JSON object matching this schema:\n" +
         stableStringify(schema);
     }
-    const { message, usage } = await this.provider.chatCompletion(
+    const { message, usage } = await this.chatCompletion(
       [
         {
           role: "system",

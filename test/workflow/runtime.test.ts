@@ -10,6 +10,7 @@ import {
   type WorkflowTaskLike,
 } from "../../src/workflow/runtime.js";
 import { WorkflowInputError, type JsonSchema } from "../../src/workflow/schema.js";
+import type { ChatProvider } from "../../src/core/types.js";
 
 function makeTask(): WorkflowTaskLike {
   return {
@@ -99,5 +100,15 @@ describe("ExecutionState", () => {
     budget.add(3);
     expect(budget.remaining()).toBe(2);
     expect(() => budget.add(3)).toThrow(WorkflowInputError);
+  });
+});
+
+describe("OpenAIWorkflowRunner", () => {
+  it("provider 缺少 chatCompletion 时构造抛错", async () => {
+    const { OpenAIWorkflowRunner } = await import("../../src/workflow/runtime.js");
+    const provider = {
+      chat: async () => ({ role: "assistant" as const, content: null }),
+    } as unknown as ChatProvider;
+    expect(() => new OpenAIWorkflowRunner(provider)).toThrow(/chatCompletion/);
   });
 });
