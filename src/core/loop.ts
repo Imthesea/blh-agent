@@ -1,4 +1,4 @@
-import type { ChatMessage, ChatProvider, ToolCall, ToolDefinition } from "./types.js";
+import type { ChatMessage, ChatProvider, ChatUsage, ToolCall, ToolDefinition } from "./types.js";
 import type { Harness } from "./harness.js";
 import type { EventBus } from "./events.js";
 import { PRE_TOOL_USE, POST_TOOL_USE } from "./hooks.js";
@@ -7,6 +7,7 @@ import type { GoalController } from "../goals/controller.js";
 import type { StopDecision } from "../goals/types.js";
 import { createLogger } from "@blh/logger";
 import { parseToolArguments } from "./parse-args.js";
+import { summarize } from "../tracing/tracer.js";
 
 const log = createLogger("core.loop");
 
@@ -74,10 +75,12 @@ export async function agentLoop(
   let reactiveRetries = 0;
   // 广播「这一轮对话开始」的事件。
   await events?.emit({ type: "turn_start" });
+  harness.tracer?.beginTurn(activeRequest);
   // 一个死循环，靠内部的 return 来退出（模型不再调用工具且目标达成时退出）。
   for (;;) {
     if (signal?.aborted) {
       markLastAssistantCancelled(messages);
+      harness.tracer?.cancelTurn("aborted");
       await events?.emit({ type: "turn_cancelled", text: "" });
       return;
     }
@@ -93,29 +96,59 @@ export async function agentLoop(
     }
     // 如果配置了后台任务管理器，把已经跑完的后台任务结果注入到对话里，让模型能看到进展。
     if (harness.jobs) {
-      harness.jobs.injectBackgroundResults(messages);
+      const injected = harness.jobs.injectBackgroundResults(messages);
+      if (injected > 0) {
+        harness.tracer?.event("job", { kind: "background", name: "collect", status: "completed", count: injected });
+      }
     }
     let message: ChatMessage;
     // 判断能不能用「流式输出」：既要传了事件总线，也要 provider 本身支持 stream。
     // 流式输出 = 模型一个字一个字地吐，前端能实时看到；非流式 = 等整段回复生成完再一次性返回。
     const streamAvailable = events !== undefined && harness.provider.stream !== undefined;
+    let usage: ChatUsage | null = null;
+    let usedStream = false;
+    const llmStart = Date.now();
     try {
       if (streamAvailable) {
         // 走流式输出，边生成边把文字增量广播出去。
         try {
-          message = await streamAssistantMessage(harness.provider, messages, harness.tools.list(), events, signal);
+          const streamed = await streamAssistantMessage(harness.provider, messages, harness.tools.list(), events, signal);
+          message = streamed.message;
+          usage = streamed.usage;
+          usedStream = true;
         } catch (error) {
           if (error instanceof TurnCancelledError) throw error;
           // 流式偶尔会失败，这里退回到非流式方式再试一次，保证对话不中断。
           log.warn("stream failed, falling back to non-streaming", {
             error: error instanceof Error ? error.message : String(error),
           });
+          harness.tracer?.event("llm", {
+            provider: harness.config.provider ?? "deepseek",
+            model: harness.config.model,
+            stream: true,
+            status: "error",
+            latency_ms: Date.now() - llmStart,
+            retries: reactiveRetries,
+            usage: null,
+          });
           message = await harness.provider.chat(messages, harness.tools.list(), undefined, signal);
+          usage = harness.provider.lastUsage?.() ?? null;
         }
       } else {
         // 不支持流式就直接用普通方式调用模型。
         message = await harness.provider.chat(messages, harness.tools.list(), undefined, signal);
+        usage = harness.provider.lastUsage?.() ?? null;
       }
+      harness.tracer?.event("llm", {
+        provider: harness.config.provider ?? "deepseek",
+        model: harness.config.model,
+        stream: usedStream,
+        status: "ok",
+        stop_reason: message.tool_calls !== undefined && message.tool_calls.length > 0 ? "tool_calls" : "stop",
+        latency_ms: Date.now() - llmStart,
+        retries: reactiveRetries,
+        usage,
+      });
       // 这轮成功拿到模型回复了，说明「提示词过长」的问题（如果之前有过）已经解决，重置重试计数。
       reactiveRetries = 0;
     } catch (error) {
@@ -123,6 +156,7 @@ export async function agentLoop(
         const partial: ChatMessage = { role: "assistant", content: error.partialText, cancelled: true };
         messages.push(partial);
         harness.sessionStore?.append(partial);
+        harness.tracer?.cancelTurn("cancelled");
         await events?.emit({ type: "turn_cancelled", text: error.partialText });
         return;
       }
@@ -130,6 +164,7 @@ export async function agentLoop(
         const partial: ChatMessage = { role: "assistant", content: "", cancelled: true };
         messages.push(partial);
         harness.sessionStore?.append(partial);
+        harness.tracer?.cancelTurn("aborted");
         await events?.emit({ type: "turn_cancelled", text: "" });
         return;
       }
@@ -153,6 +188,9 @@ export async function agentLoop(
     // 如果模型没有要求调用任何工具，说明它觉得自己「说完了」，此时进入「目标检查」环节。
     if (toolCalls.length === 0) {
       const decision = await evaluateGoalStop(harness, messages);
+      if (decision !== null && decision.action !== "allow") {
+        harness.tracer?.event("goal", { action: decision.action, reason: summarize(decision.reason) });
+      }
       // decision.action === "block" 表示「目标还没达成，不许结束」。
       // 这时拼一条提醒消息塞回对话，让模型继续干活，然后重新进入下一轮。
       if (decision !== null && decision.action === "block") {
@@ -162,6 +200,7 @@ export async function agentLoop(
         continue;
       }
       // 目标已达成（或根本没有设置目标），广播「这一轮结束」并退出整个循环。
+      harness.tracer?.endTurn();
       await events?.emit({ type: "turn_end" });
       return;
     }
@@ -174,9 +213,11 @@ export async function agentLoop(
     // 逐个执行模型要调用的每个工具。
     for (const call of toolCalls) {
       const name = call.function.name;
+      const toolStart = Date.now();
       log.debug("tool call", { tool: name });
       // 把模型传过来的 JSON 字符串参数解析成对象（比如 '{"command":"ls"}' -> {command:"ls"}）。
       const input = parseToolArguments(call.function.arguments);
+      const background = harness.jobs !== undefined && name === "bash" && input["run_in_background"] === true;
       // 广播「开始调用工具」的事件。
       await events?.emit({ type: "tool_call", id: call.id, name, arguments: call.function.arguments });
       let result: string;
@@ -185,11 +226,7 @@ export async function agentLoop(
         // 所以这里不调用 dispatch，也不触发钩子，只是打一个标记，等批次结束后统一处理。
         result = "Compaction requested after this tool batch.";
         compactRequested = true;
-      } else if (
-        harness.jobs !== undefined &&
-        name === "bash" &&
-        input["run_in_background"] === true
-      ) {
+      } else if (background) {
         // 特殊情况：模型想用「后台方式」跑 bash 命令（不阻塞当前对话，命令在后台慢慢跑）。
         const blocked = await harness.hooks.firstBlock(PRE_TOOL_USE, { name, input });
         if (blocked !== null) {
@@ -198,7 +235,8 @@ export async function agentLoop(
         } else {
           try {
             // 把命令交给后台任务管理器启动，立刻返回（不等待命令跑完）。
-            result = harness.jobs.startBackground(String(input["command"] ?? ""));
+            result = harness.jobs!.startBackground(String(input["command"] ?? ""));
+            harness.tracer?.event("job", { kind: "background", name: summarize(String(input["command"] ?? ""), 100), status: "started" });
           } catch (error) {
             // 后台启动失败时，把错误信息包装成结果，让模型能感知到。
             result = `error: ${error instanceof Error ? error.message : String(error)}`;
@@ -227,6 +265,14 @@ export async function agentLoop(
         output: result,
         isError: result.startsWith("error:") || result.startsWith("denied"),
       });
+      harness.tracer?.event("tool", {
+        tool: name,
+        args_summary: summarize(JSON.stringify(input)),
+        latency_ms: Date.now() - toolStart,
+        status: result.startsWith("error:") ? "error" : result.startsWith("denied") ? "denied" : "ok",
+        output_summary: summarize(result),
+        ...(background ? { background: true } : {}),
+      });
       // 把工具结果包装成一条 tool 消息，追加进对话，让模型下一轮能看到执行结果。
       const toolMessage: ChatMessage = { role: "tool", tool_call_id: call.id, content: result };
       messages.push(toolMessage);
@@ -235,6 +281,7 @@ export async function agentLoop(
 
     if (signal?.aborted) {
       markLastAssistantCancelled(messages);
+      harness.tracer?.cancelTurn("aborted");
       await events?.emit({ type: "turn_cancelled", text: "" });
       return;
     }
@@ -281,14 +328,14 @@ function goalReminder(goal: GoalController | undefined, decision: StopDecision):
   );
 }
 
-/** 消费 Provider 底层流，转发文本增量，返回拼好的最终消息。 */
+/** 消费 Provider 底层流，转发文本增量，返回拼好的最终消息与 token 用量。 */
 async function streamAssistantMessage(
   provider: ChatProvider,
   messages: ChatMessage[],
   tools: ToolDefinition[],
   events: EventBus,
   signal?: AbortSignal,
-): Promise<ChatMessage> {
+): Promise<{ message: ChatMessage; usage: ChatUsage | null }> {
   const stream = provider.stream!(messages, tools, undefined, signal);
   let partialText = "";
   try {
@@ -297,7 +344,7 @@ async function streamAssistantMessage(
         partialText += event.text;
         await events.emit({ type: "assistant_text_delta", text: event.text });
       } else if (event.type === "done") {
-        return event.message;
+        return { message: event.message, usage: event.usage ?? null };
       }
     }
   } catch (error) {

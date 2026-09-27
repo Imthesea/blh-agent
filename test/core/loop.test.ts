@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { agentLoop, lastAssistantText, parseToolArguments } from "../../src/core/loop.js";
@@ -22,6 +22,7 @@ import { GoalController } from "../../src/goals/controller.js";
 import { SessionStore } from "../../src/session/store.js";
 import type { GoalEvaluator } from "../../src/goals/evaluator.js";
 import type { GoalEvaluation } from "../../src/goals/types.js";
+import { Tracer, localDate } from "../../src/tracing/tracer.js";
 
 const config: Config = {
   apiKey: "k",
@@ -43,6 +44,7 @@ function makeHarness(
     jobs?: JobsRuntime;
     agents?: TeamAgents;
     goal?: GoalController;
+    tracer?: Tracer;
   } = {},
 ) {
   const tools = new ToolRegistry();
@@ -65,6 +67,8 @@ function makeHarness(
     options.agents,
     undefined,
     options.goal,
+    undefined,
+    options.tracer,
   );
 }
 
@@ -919,5 +923,73 @@ describe("agentLoop streaming events", () => {
       "turn_end",
     ]);
     expect(lastAssistantText(messages)).toBe("done");
+  });
+});
+
+describe("agentLoop tracer 埋点", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(path.join(os.tmpdir(), "loop-tracer-"));
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function readTrace(dir: string): Array<Record<string, unknown>> {
+    const file = path.join(Tracer.tracesDir(dir), `${localDate()}.jsonl`);
+    return readFileSync(file, "utf-8")
+      .split("\n")
+      .filter((l) => l.trim() !== "")
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+  }
+
+  it("runTurn 写入 turn_start/llm/tool/turn_end 事件", async () => {
+    const tracer = new Tracer(tmpDir);
+    const harness = makeHarness(
+      [makeToolCallMessage("echo", { text: "hi" }), makeTextMessage("done")],
+      { tracer },
+    );
+    await harness.runTurn(harness.newSession(), "帮我修 bug");
+
+    const types = readTrace(tmpDir).map((e) => e["type"]);
+    expect(types).toContain("turn_start");
+    expect(types).toContain("llm");
+    expect(types).toContain("tool");
+    expect(types).toContain("turn_end");
+  });
+
+  it("turn_start 记录用户请求，llm/tool 记录关键字段", async () => {
+    const tracer = new Tracer(tmpDir);
+    const harness = makeHarness(
+      [makeToolCallMessage("echo", { text: "hi" }), makeTextMessage("done")],
+      { tracer },
+    );
+    await harness.runTurn(harness.newSession(), "帮我修 bug");
+
+    const events = readTrace(tmpDir);
+    const turnStart = events.find((e) => e["type"] === "turn_start");
+    expect(turnStart?.["user_message"]).toBe("帮我修 bug");
+    expect(turnStart?.["sid"]).toBe("cli");
+
+    const tool = events.find((e) => e["type"] === "tool");
+    expect(tool?.["tool"]).toBe("echo");
+    expect(tool?.["status"]).toBe("ok");
+
+    const llm = events.find((e) => e["type"] === "llm");
+    expect(llm?.["status"]).toBe("ok");
+    expect(llm?.["model"]).toBe("m");
+  });
+
+  it("有 sessionStore 时 sid 取会话文件名", async () => {
+    const tracer = new Tracer(tmpDir);
+    const store = SessionStore.create(tmpDir);
+    const harness = makeHarness([makeTextMessage("done")], { tracer });
+    harness.sessionStore = store;
+    await harness.runTurn(harness.newSession(), "go");
+
+    const events = readTrace(tmpDir);
+    expect(events.every((e) => e["sid"] === path.basename(store.path))).toBe(true);
   });
 });

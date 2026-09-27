@@ -12,6 +12,8 @@ import type { JobsRuntime } from "../jobs/runtime.js";
 import type { Extensions } from "../extensions/index.js";
 import { CLEAR_ALIASES, type GoalController } from "../goals/controller.js";
 import type { SessionStore } from "../session/store.js";
+import * as path from "node:path";
+import type { Tracer } from "../tracing/tracer.js";
 
 /** TeamRuntime 提供给 Harness/repl 的最小接口。 */
 export interface TeamAgents {
@@ -40,6 +42,7 @@ export class Harness {
     readonly extensions?: Extensions,
     readonly goal?: GoalController,
     readonly workflow?: string,
+    readonly tracer?: Tracer,
   ) {
     const base =
       `你是 blh，一个编程智能体。工作目录：${config.workdir}。 ` +
@@ -82,6 +85,7 @@ export class Harness {
 
   /** 跑一轮用户对话：把用户输入加进对话，处理记忆，然后交给 agentLoop 执行并收尾。 */
   async runTurn(messages: ChatMessage[], text: string, events?: EventBus, signal?: AbortSignal): Promise<void> {
+    this.tracer?.setSid(this.sessionStore ? path.basename(this.sessionStore.path) : "cli");
     await this.hooks.trigger(USER_PROMPT_SUBMIT, { text });
     const userMessage: ChatMessage = { role: "user", content: text };
     messages.push(userMessage);
@@ -104,6 +108,9 @@ export class Harness {
     const scheduledStart = messages.length;
     const fired = jobs.consumeAndInjectCron(messages);
     if (fired.length === 0) return;
+    for (const job of fired) {
+      this.tracer?.event("job", { kind: "cron", name: job.id, status: "fired" });
+    }
     try {
       await runInScheduledTurn(() => agentLoop(this, messages, "[scheduled]"));
     } catch (error) {
