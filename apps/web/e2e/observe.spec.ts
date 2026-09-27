@@ -38,3 +38,18 @@ test("Overview 页显示统计卡片、成本图与最近 turns", async ({ page 
   await expect(page.locator(".cost-bar-col")).toHaveCount(2);
   await expect(page.getByText("查一下 trace 文件")).toBeVisible();
 });
+
+test("Trace 页显示日期/会话选择器与 turn 卡片", async ({ page }) => {
+  await page.goto("/#/observe/trace");
+  await expect(page.locator(".trace-toolbar select").first()).toBeVisible();
+  await expect(page.getByText("查一下 trace 文件")).toBeVisible();
+  await expect(page.locator(".trace-llm-row")).toContainText("deepseek-chat");
+  await expect(page.locator(".trace-tool-row")).toContainText("read_file");
+  await expect(page.getByText("进行中")).toBeVisible();
+});
+
+test("Trace 页展开工具行显示输出摘要", async ({ page }) => {
+  await page.goto("/#/observe/trace");
+  await page.locator(".trace-tool-row button").click();
+  await expect(page.getByText("file content")).toBeVisible();
+});

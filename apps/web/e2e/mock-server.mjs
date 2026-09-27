@@ -7,6 +7,28 @@ const sessions = [
   { file: "session_1.jsonl", mtime: Date.now(), preview: "历史会话" },
 ];
 
+const traceFiles = ["2026-09-27"];
+
+const traceTurns = [
+  {
+    turn: 1,
+    sid: "session_1.jsonl",
+    userMessage: "查一下 trace 文件",
+    startedAt: Date.now(),
+    finished: false,
+    cancelled: false,
+    latencyMs: null,
+    iterations: 1,
+    toolsUsed: 1,
+    costUsd: 0.001,
+    events: [
+      { ts: 1000, type: "turn_start", sid: "session_1.jsonl", turn: 1, user_message: "查一下 trace 文件" },
+      { ts: 1100, type: "llm", sid: "session_1.jsonl", turn: 1, provider: "deepseek", model: "deepseek-chat", status: "ok", latency_ms: 80, usage: { promptTokens: 10, completionTokens: 5 } },
+      { ts: 1200, type: "tool", sid: "session_1.jsonl", turn: 1, tool: "read_file", args_summary: "…", latency_ms: 20, status: "ok", output_summary: "file content" },
+    ],
+  },
+];
+
 const traceOverview = {
   usage: {
     total: { in: 12000, out: 3000, costUsd: 0.42 },
@@ -161,6 +183,16 @@ const server = http.createServer(async (req, res) => {
     sessions.splice(0, sessions.length, { file: "session_1.jsonl", mtime: Date.now(), preview: "历史会话" });
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+  if (method === "GET" && pathname === "/api/trace/files") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(traceFiles));
+    return;
+  }
+  if (method === "GET" && pathname === "/api/trace/turns") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(traceTurns));
     return;
   }
   if (method === "GET" && pathname === "/api/trace/overview") {
