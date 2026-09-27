@@ -734,3 +734,28 @@ button, input, select, textarea { font-family: inherit; }
   color: var(--dsw-alias-label-tertiary);
   border-top: 1px solid var(--dsw-alias-border-l1);
 }
+
+/* ============ observe Ops 页 ============ */
+.ops-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.ops-table th, .ops-table td {
+  text-align: left;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+.ops-table th { color: var(--dsw-alias-label-tertiary); font-weight: 500; }
+.ops-approval { display: flex; gap: 8px; margin-bottom: 8px; }
+.ops-raw {
+  margin: 0;
+  padding: 12px;
+  background: var(--dsw-static-neutral-bluish-75);
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: pre-wrap;
+  overflow: auto;
+  max-height: 320px;
+}

@@ -53,3 +53,14 @@ test("Trace 页展开工具行显示输出摘要", async ({ page }) => {
   await page.locator(".trace-tool-row button").click();
   await expect(page.getByText("file content")).toBeVisible();
 });
+
+test("Ops 页显示成本表、审批表与 trace 原文", async ({ page }) => {
+  await page.goto("/#/observe/ops");
+  await expect(
+    page.locator(".observe-section").filter({ hasText: "按 provider" }).locator(".ops-table"),
+  ).toContainText("deepseek");
+  await expect(page.locator(".ops-approval")).toContainText("allow");
+  await expect(page.locator(".ops-approval")).toContainText("1");
+  await expect(page.locator(".ops-raw")).toContainText("turn_start");
+  await expect(page.locator(".ops-slowest")).toContainText("查一下 trace 文件");
+});

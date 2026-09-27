@@ -9,6 +9,14 @@ const sessions = [
 
 const traceFiles = ["2026-09-27"];
 
+const traceEvents = {
+  events: [
+    { ts: 1000, type: "turn_start", sid: "session_1.jsonl", turn: 1, user_message: "查一下 trace 文件" },
+    { ts: 1100, type: "llm", sid: "session_1.jsonl", turn: 1, model: "deepseek-chat" },
+  ],
+  nextCursor: 2,
+};
+
 const traceTurns = [
   {
     turn: 1,
@@ -17,7 +25,7 @@ const traceTurns = [
     startedAt: Date.now(),
     finished: false,
     cancelled: false,
-    latencyMs: null,
+    latencyMs: 2100,
     iterations: 1,
     toolsUsed: 1,
     costUsd: 0.001,
@@ -25,6 +33,7 @@ const traceTurns = [
       { ts: 1000, type: "turn_start", sid: "session_1.jsonl", turn: 1, user_message: "查一下 trace 文件" },
       { ts: 1100, type: "llm", sid: "session_1.jsonl", turn: 1, provider: "deepseek", model: "deepseek-chat", status: "ok", latency_ms: 80, usage: { promptTokens: 10, completionTokens: 5 } },
       { ts: 1200, type: "tool", sid: "session_1.jsonl", turn: 1, tool: "read_file", args_summary: "…", latency_ms: 20, status: "ok", output_summary: "file content" },
+      { ts: 1300, type: "approval", sid: "session_1.jsonl", turn: 1, tool: "bash", decision: "allow", rule: "user", source: "web" },
     ],
   },
 ];
@@ -193,6 +202,11 @@ const server = http.createServer(async (req, res) => {
   if (method === "GET" && pathname === "/api/trace/turns") {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify(traceTurns));
+    return;
+  }
+  if (method === "GET" && pathname === "/api/trace/events") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(traceEvents));
     return;
   }
   if (method === "GET" && pathname === "/api/trace/overview") {
