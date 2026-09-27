@@ -182,4 +182,58 @@ describe("makePermissionHook（trace 事件）", () => {
     const hook = makePermissionHook(DEFAULT_RULES, async () => "allow");
     expect(await hook("bash", { command: "ls" })).toBeNull();
   });
+
+  it("破坏性命令硬拦截记录 deny/destructive_bash 事件", async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "blh-trace-approval-"));
+    const tracer = new Tracer(dir);
+    const hook = makePermissionHook(DEFAULT_RULES, async () => "allow", undefined, tracer);
+    expect(await hook("bash", { command: "rm -rf /" })).toBe("denied by permission rule (bash: rm -rf /)");
+    const events = readTraceEvents(dir);
+    expect(events).toHaveLength(1);
+    expect(events[0]!).toMatchObject({
+      type: "approval",
+      tool: "bash",
+      decision: "deny",
+      rule: "destructive_bash",
+      source: "cli",
+    });
+  });
+
+  it("scheduled turn 内拒绝记录 deny/scheduled_turn 事件", async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "blh-trace-approval-"));
+    const tracer = new Tracer(dir);
+    const ask = vi.fn().mockResolvedValue("allow");
+    const hook = makePermissionHook(DEFAULT_RULES, ask, undefined, tracer);
+    await runInScheduledTurn(async () => {
+      await expect(hook("bash", { command: "ls" })).resolves.toBe(
+        "denied: cannot request approval from a scheduled turn",
+      );
+    });
+    const events = readTraceEvents(dir);
+    expect(events).toHaveLength(1);
+    expect(events[0]!).toMatchObject({
+      type: "approval",
+      tool: "bash",
+      decision: "deny",
+      rule: "scheduled_turn",
+      source: "cli",
+    });
+  });
+
+  it("无 asker 时拒绝记录 deny/no_asker 事件", async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "blh-trace-approval-"));
+    const tracer = new Tracer(dir);
+    const hook = makePermissionHook(DEFAULT_RULES, undefined, undefined, tracer);
+    const result = await hook("bash", { command: "ls" });
+    expect(result).toContain("non-interactive");
+    const events = readTraceEvents(dir);
+    expect(events).toHaveLength(1);
+    expect(events[0]!).toMatchObject({
+      type: "approval",
+      tool: "bash",
+      decision: "deny",
+      rule: "no_asker",
+      source: "cli",
+    });
+  });
 });
