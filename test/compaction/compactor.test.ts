@@ -3,6 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ContextCompactor } from "../../src/compaction/compactor.js";
+import { Tracer } from "../../src/tracing/tracer.js";
 import type {
   ChatMessage,
   ChatProvider,
@@ -578,5 +579,65 @@ describe("prepare 管线", () => {
     expect(prepared).toHaveLength(1);
     expect(prepared[0]?.content?.startsWith("[已压缩]")).toBe(true);
     expect(prepared[0]?.content).toContain("当前用户请求：\nbig task");
+  });
+});
+
+describe("ContextCompactor（trace 事件）", () => {
+  let tmpDir: string;
+  beforeEach(() => {
+    tmpDir = mkdtempSync(path.join(os.tmpdir(), "compactor-trace-"));
+  });
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function readTraceEvents(workdir: string): Array<Record<string, unknown>> {
+    const dir = path.join(workdir, ".blh", "traces");
+    return readdirSync(dir)
+      .filter((f) => f.endsWith(".jsonl"))
+      .flatMap((f) =>
+        readFileSync(path.join(dir, f), "utf8")
+          .split("\n")
+          .filter(Boolean)
+          .map((l) => JSON.parse(l) as Record<string, unknown>),
+      );
+  }
+
+  it("compactHistory 记录 proactive 事件", async () => {
+    const provider = new FakeProvider([textMsg("摘要内容")]);
+    const tracer = new Tracer(tmpDir);
+    const compactor = new ContextCompactor({
+      provider,
+      toolResultsDir: path.join(tmpDir, ".task_outputs", "tool-results"),
+      tracer,
+    });
+    const messages = [userMsg("a"), textMsg("b"), userMsg("c")];
+    const result = await compactor.compactHistory(messages, "req");
+    expect(result).toHaveLength(1);
+    expect(readTraceEvents(tmpDir)).toEqual([
+      expect.objectContaining({ type: "compact", kind: "proactive", before_msgs: 3, after_msgs: 1 }),
+    ]);
+  });
+
+  it("reactiveCompact 记录 reactive 事件（after_msgs 为实际结果条数）", async () => {
+    const provider = new FakeProvider([textMsg("摘要内容")]);
+    const tracer = new Tracer(tmpDir);
+    const compactor = new ContextCompactor({
+      provider,
+      toolResultsDir: path.join(tmpDir, ".task_outputs", "tool-results"),
+      tracer,
+    });
+    const messages = Array.from({ length: 8 }, (_, i) =>
+      i % 2 === 0 ? userMsg(`u${i}`) : textMsg(`a${i}`),
+    );
+    const result = await compactor.reactiveCompact(messages, "req");
+    expect(readTraceEvents(tmpDir)).toEqual([
+      expect.objectContaining({
+        type: "compact",
+        kind: "reactive",
+        before_msgs: 8,
+        after_msgs: result.length,
+      }),
+    ]);
   });
 });

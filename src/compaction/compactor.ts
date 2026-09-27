@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "no
 import * as path from "node:path";
 import type { ChatMessage, ChatProvider } from "../core/types.js";
 import { createLogger } from "@blh/logger";
+import type { Tracer } from "../tracing/tracer.js";
 
 const log = createLogger("compaction.compactor");
 
@@ -16,6 +17,8 @@ export interface CompactorOptions {
   provider: ChatProvider;
   /** 工具结果落盘的目录。 */
   toolResultsDir: string;
+  /** 可选 tracer：记录压缩事件。 */
+  tracer?: Tracer;
 }
 
 export class ContextCompactor {
@@ -34,6 +37,7 @@ export class ContextCompactor {
 
   readonly provider: ChatProvider;
   readonly toolResultsDir: string;
+  readonly tracer: Tracer | undefined;
 
   /** 实例级上下文阈值，默认取静态常量；测试可覆写（TS 实例无法遮蔽 static）。 */
   contextCharLimit: number = ContextCompactor.CONTEXT_CHAR_LIMIT;
@@ -42,6 +46,7 @@ export class ContextCompactor {
   constructor(options: CompactorOptions) {
     this.provider = options.provider;
     this.toolResultsDir = options.toolResultsDir;
+    this.tracer = options.tracer;
   }
 
   /** 估算一组消息大概占多少字符（用 JSON 字符串的长度来近似）。 */
@@ -395,6 +400,7 @@ export class ContextCompactor {
    */
   async compactHistory(messages: ChatMessage[], activeRequest: string): Promise<ChatMessage[]> {
     const summary = await this.summarizeHistory(messages);
+    this.tracer?.event("compact", { kind: "proactive", before_msgs: messages.length, after_msgs: 1 });
     return [ContextCompactor.summaryMessage("已压缩", activeRequest, summary)];
   }
 
@@ -434,7 +440,9 @@ export class ContextCompactor {
       summary,
     );
     // 摘要放最前，尾部最近几条原样保留。
-    return tailStart ? [message, ...messages.slice(tailStart)] : [message];
+    const result = tailStart ? [message, ...messages.slice(tailStart)] : [message];
+    this.tracer?.event("compact", { kind: "reactive", before_msgs: messages.length, after_msgs: result.length });
+    return result;
   }
 
   /**
