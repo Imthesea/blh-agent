@@ -1,4 +1,5 @@
 import type { ChatMessage, ChatProvider } from "../core/types.js";
+import type { Tracer } from "../tracing/tracer.js";
 import type { MemoryRecord, MemoryStore } from "./store.js";
 import { extractJsonArray, messageText } from "./text.js";
 
@@ -16,6 +17,7 @@ export class MemoryRecall {
   constructor(
     private readonly store: MemoryStore,
     private readonly provider: ChatProvider,
+    private readonly tracer?: Tracer,
   ) {}
 
   /**
@@ -154,6 +156,7 @@ export class MemoryRecall {
       loaded.push({ source: filename, content: recalled });
       remaining -= recalled.length;
     }
+    this.tracer?.event("memory", { action: "recall", hits: loaded.length });
     return loaded.length ? JSON.stringify(loaded, null, 2) : "";
   }
 

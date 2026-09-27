@@ -1,5 +1,6 @@
 // src/memory/system.ts
 import type { ChatMessage, ChatProvider } from "../core/types.js";
+import type { Tracer } from "../tracing/tracer.js";
 import { MemoryExtractor } from "./extract.js";
 import { MemoryRecall } from "./recall.js";
 import { MemoryStore } from "./store.js";
@@ -21,9 +22,10 @@ export class Memory {
   constructor(
     readonly store: MemoryStore,
     readonly provider: ChatProvider,
+    readonly tracer?: Tracer,
   ) {
-    this.recall = new MemoryRecall(store, provider);
-    this.extractor = new MemoryExtractor(store, provider);
+    this.recall = new MemoryRecall(store, provider, tracer);
+    this.extractor = new MemoryExtractor(store, provider, tracer);
   }
 
   /**

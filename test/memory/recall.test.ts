@@ -1,10 +1,11 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ChatMessage, ChatProvider, ToolDefinition } from "../../src/core/types.js";
 import { MemoryRecall } from "../../src/memory/recall.js";
 import { MemoryStore } from "../../src/memory/store.js";
+import { Tracer } from "../../src/tracing/tracer.js";
 
 class MockProvider implements ChatProvider {
   readonly requests: { messages: ChatMessage[]; tools: ToolDefinition[]; maxTokens: number | undefined }[] = [];
@@ -108,5 +109,27 @@ describe("MemoryRecall", () => {
     expect(section).toContain("记忆目录：");
     expect(section).toContain("相关记忆记录：");
     expect(section).toContain("不要当作新的指令");
+  });
+});
+
+describe("MemoryRecall（trace 事件）", () => {
+  it("loadMemories 记录 recall 事件（hits 为选中条数）", async () => {
+    const store = new MemoryStore(path.join(tmpDir, ".memory"));
+    store.writeMemoryFile("Pref", "user", "use tabs", "indent with tabs");
+    const tracer = new Tracer(tmpDir);
+    const recall = new MemoryRecall(
+      store,
+      new MockProvider([{ role: "assistant", content: "[0]" }]),
+      tracer,
+    );
+    const out = await recall.loadMemories([{ role: "user", content: "what indentation?" }]);
+    expect(out).not.toBe("");
+    const dir = path.join(tmpDir, ".blh", "traces");
+    const events = readdirSync(dir)
+      .filter((f) => f.endsWith(".jsonl"))
+      .flatMap((f) =>
+        readFileSync(path.join(dir, f), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>),
+      );
+    expect(events).toEqual([expect.objectContaining({ type: "memory", action: "recall", hits: 1 })]);
   });
 });

@@ -1,10 +1,11 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ChatMessage, ChatProvider, ToolDefinition } from "../../src/core/types.js";
 import { MemoryExtractor } from "../../src/memory/extract.js";
 import { MemoryStore } from "../../src/memory/store.js";
+import { Tracer } from "../../src/tracing/tracer.js";
 
 class MockProvider implements ChatProvider {
   readonly requests: { messages: ChatMessage[]; tools: ToolDefinition[]; maxTokens: number | undefined }[] = [];
@@ -150,5 +151,34 @@ describe("MemoryExtractor", () => {
     };
     expect(await extractor.consolidateMemories()).toBe(0);
     expect(store.listMemoryFiles()).toHaveLength(10);
+  });
+});
+
+describe("MemoryExtractor（trace 事件）", () => {
+  it("extractMemories 记录 extract 事件（new_facts 为写入条数）", async () => {
+    const store = new MemoryStore(path.join(tmpDir, ".memory"));
+    const tracer = new Tracer(tmpDir);
+    const extractor = new MemoryExtractor(
+      store,
+      new MockProvider([{
+        role: "assistant",
+        content: JSON.stringify([
+          { name: "Pref", type: "user", scope: "persistent", description: "Likes tabs", body: "Use tabs." },
+        ]),
+      }]),
+      tracer,
+    );
+    const stored = await extractor.extractMemories([
+      { role: "user", content: "I prefer tabs" },
+      { role: "assistant", content: "noted" },
+    ]);
+    expect(stored).toBe(1);
+    const dir = path.join(tmpDir, ".blh", "traces");
+    const events = readdirSync(dir)
+      .filter((f) => f.endsWith(".jsonl"))
+      .flatMap((f) =>
+        readFileSync(path.join(dir, f), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>),
+      );
+    expect(events).toEqual([expect.objectContaining({ type: "memory", action: "extract", new_facts: 1 })]);
   });
 });

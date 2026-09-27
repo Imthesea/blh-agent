@@ -1,6 +1,7 @@
 // src/memory/extract.ts
 import { readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import type { ChatMessage, ChatProvider } from "../core/types.js";
+import type { Tracer } from "../tracing/tracer.js";
 import { INDEX_NAME, MEMORY_TYPES, MemoryStore } from "./store.js";
 import { extractJsonArray, messageText } from "./text.js";
 import { createLogger } from "@blh/logger";
@@ -37,6 +38,7 @@ export class MemoryExtractor {
   constructor(
     readonly store: MemoryStore,
     private readonly provider: ChatProvider,
+    private readonly tracer?: Tracer,
   ) {}
 
   /**
@@ -152,6 +154,7 @@ export class MemoryExtractor {
       if (stored) {
         log.info("stored records", { stored });
       }
+      this.tracer?.event("memory", { action: "extract", new_facts: stored });
       return stored;
     } catch (error) {
       log.warn("extraction skipped", { error: error instanceof Error ? error.message : String(error) });
