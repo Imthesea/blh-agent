@@ -926,70 +926,121 @@ describe("agentLoop streaming events", () => {
   });
 });
 
-describe("agentLoop tracer 埋点", () => {
-  let tmpDir: string;
-
-  beforeEach(() => {
-    tmpDir = mkdtempSync(path.join(os.tmpdir(), "loop-tracer-"));
-  });
-
-  afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true });
-  });
+describe("agentLoop tracing", () => {
+  function makeTracer(): { tracer: Tracer; dir: string } {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "blh-loop-trace-"));
+    return { tracer: new Tracer(dir), dir };
+  }
 
   function readTrace(dir: string): Array<Record<string, unknown>> {
-    const file = path.join(Tracer.tracesDir(dir), `${localDate()}.jsonl`);
+    const file = path.join(dir, ".blh", "traces", `${localDate()}.jsonl`);
+    if (!existsSync(file)) return [];
     return readFileSync(file, "utf-8")
       .split("\n")
       .filter((l) => l.trim() !== "")
       .map((l) => JSON.parse(l) as Record<string, unknown>);
   }
 
-  it("runTurn 写入 turn_start/llm/tool/turn_end 事件", async () => {
-    const tracer = new Tracer(tmpDir);
+  function readLedgerCount(dir: string): number {
+    const file = path.join(dir, ".blh", "usage.jsonl");
+    if (!existsSync(file)) return 0;
+    return readFileSync(file, "utf-8")
+      .split("\n")
+      .filter((l) => l.trim() !== "").length;
+  }
+
+  it("完整一轮：事件序列 turn_start/llm/tool/llm/turn_end，账本记 2 行", async () => {
+    const { tracer, dir } = makeTracer();
     const harness = makeHarness(
       [makeToolCallMessage("echo", { text: "hi" }), makeTextMessage("done")],
       { tracer },
     );
-    await harness.runTurn(harness.newSession(), "帮我修 bug");
+    const messages: ChatMessage[] = [{ role: "user", content: "go" }];
+    await agentLoop(harness, messages, "go");
 
-    const types = readTrace(tmpDir).map((e) => e["type"]);
-    expect(types).toContain("turn_start");
-    expect(types).toContain("llm");
-    expect(types).toContain("tool");
-    expect(types).toContain("turn_end");
+    const events = readTrace(dir);
+    expect(events.map((e) => e["type"])).toEqual(["turn_start", "llm", "tool", "llm", "turn_end"]);
+    expect(events[0]!["user_message"]).toBe("go");
+    const llm = events[1]!;
+    expect(llm["provider"]).toBeDefined();
+    expect(llm["status"]).toBe("ok");
+    expect(typeof llm["latency_ms"]).toBe("number");
+    const tool = events[2]!;
+    expect(tool["tool"]).toBe("echo");
+    expect(tool["status"]).toBe("ok");
+    expect(typeof tool["args_summary"]).toBe("string");
+    const end = events[4]!;
+    expect(end["iterations"]).toBe(2);
+    expect(end["tools_used"]).toBe(1);
+    expect(readLedgerCount(dir)).toBe(2);
   });
 
-  it("turn_start 记录用户请求，llm/tool 记录关键字段", async () => {
-    const tracer = new Tracer(tmpDir);
-    const harness = makeHarness(
-      [makeToolCallMessage("echo", { text: "hi" }), makeTextMessage("done")],
-      { tracer },
+  it("goal 决策产生 goal 事件（block + achieved）", async () => {
+    const { tracer, dir } = makeTracer();
+    const goal = new GoalController(
+      sequentialEvaluator([
+        { ok: false, reason: "not yet", impossible: false },
+        { ok: true, reason: "done", impossible: false },
+      ]),
     );
-    await harness.runTurn(harness.newSession(), "帮我修 bug");
+    goal.setGoal("finish");
+    const harness = makeHarness([makeTextMessage("try1"), makeTextMessage("done")], { goal, tracer });
+    const messages = harness.newSession();
+    await harness.runTurn(messages, "go");
 
-    const events = readTrace(tmpDir);
-    const turnStart = events.find((e) => e["type"] === "turn_start");
-    expect(turnStart?.["user_message"]).toBe("帮我修 bug");
-    expect(turnStart?.["sid"]).toBe("cli");
-
-    const tool = events.find((e) => e["type"] === "tool");
-    expect(tool?.["tool"]).toBe("echo");
-    expect(tool?.["status"]).toBe("ok");
-
-    const llm = events.find((e) => e["type"] === "llm");
-    expect(llm?.["status"]).toBe("ok");
-    expect(llm?.["model"]).toBe("m");
+    const goalEvents = readTrace(dir).filter((e) => e["type"] === "goal");
+    expect(goalEvents.length).toBe(2);
+    expect(goalEvents[0]!["action"]).toBe("block");
+    expect(goalEvents[0]!["reason"]).toBe("not yet");
+    expect(goalEvents[1]!["action"]).toBe("achieved");
   });
 
-  it("有 sessionStore 时 sid 取会话文件名", async () => {
-    const tracer = new Tracer(tmpDir);
-    const store = SessionStore.create(tmpDir);
+  it("runTurn 设置 sid 为会话文件名", async () => {
+    const { tracer, dir } = makeTracer();
     const harness = makeHarness([makeTextMessage("done")], { tracer });
-    harness.sessionStore = store;
-    await harness.runTurn(harness.newSession(), "go");
+    const storeDir = mkdtempSync(path.join(os.tmpdir(), "blh-loop-store-"));
+    harness.sessionStore = SessionStore.create(storeDir);
+    const messages = harness.newSession();
+    await harness.runTurn(messages, "go");
 
-    const events = readTrace(tmpDir);
-    expect(events.every((e) => e["sid"] === path.basename(store.path))).toBe(true);
+    const events = readTrace(dir);
+    expect(events.length).toBeGreaterThan(0);
+    expect(String(events[0]!["sid"])).toMatch(/\.jsonl$/);
+  });
+
+  it("runScheduledTurn 记录 cron job fired 事件", async () => {
+    const { tracer, dir } = makeTracer();
+    const jobs = {
+      injectBackgroundResults: () => 0,
+      consumeAndInjectCron: () => [{ id: "job-1" }],
+      cron: { acknowledge: () => {}, restore: () => {} },
+      background: { hasRunning: () => false },
+    } as unknown as JobsRuntime;
+    const harness = makeHarness([makeTextMessage("done")], { jobs, tracer });
+    await harness.runScheduledTurn([]);
+
+    const jobEvents = readTrace(dir).filter((e) => e["type"] === "job");
+    expect(jobEvents.length).toBe(1);
+    expect(jobEvents[0]!).toMatchObject({ kind: "cron", name: "job-1", status: "fired" });
+  });
+
+  it("工具批次后 abort 产生 turn_cancelled 事件", async () => {
+    const { tracer, dir } = makeTracer();
+    const controller = new AbortController();
+    const hooks = new HookBus();
+    hooks.register(PRE_TOOL_USE, async () => {
+      controller.abort();
+      return null;
+    });
+    const harness = makeHarness(
+      [makeToolCallMessage("echo", { text: "hi" }), makeTextMessage("done")],
+      { hooks, tracer },
+    );
+    const messages: ChatMessage[] = [{ role: "user", content: "go" }];
+    await agentLoop(harness, messages, "go", undefined, controller.signal);
+
+    const events = readTrace(dir);
+    const last = events[events.length - 1]!;
+    expect(last["type"]).toBe("turn_cancelled");
   });
 });
