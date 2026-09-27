@@ -1043,4 +1043,22 @@ describe("agentLoop tracing", () => {
     const last = events[events.length - 1]!;
     expect(last["type"]).toBe("turn_cancelled");
   });
+
+  it("流式失败回退只记一次迭代", async () => {
+    const { tracer, dir } = makeTracer();
+    const provider = new FailingStreamProvider([makeTextMessage("done")]);
+    const harness = makeHarness([], { provider, tracer });
+    const bus = new EventBus();
+    const messages = harness.newSession();
+    await harness.runTurn(messages, "go", bus);
+
+    const trace = readTrace(dir);
+    const llmEvents = trace.filter((e) => e["type"] === "llm");
+    expect(llmEvents.length).toBe(2);
+    expect(llmEvents[0]!["status"]).toBe("error");
+    expect(llmEvents[1]!["status"]).toBe("ok");
+    const end = trace[trace.length - 1]!;
+    expect(end["type"]).toBe("turn_end");
+    expect(end["iterations"]).toBe(1);
+  });
 });

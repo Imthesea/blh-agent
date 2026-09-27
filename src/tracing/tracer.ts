@@ -78,7 +78,9 @@ export class Tracer {
   event(type: string, payload: Record<string, unknown>): void {
     try {
       if (type === "llm") {
-        this.iterations += 1;
+        if (payload.status !== "error") {
+          this.iterations += 1;
+        }
         this.recordUsage(payload as unknown as LlmPayload);
       } else if (type === "tool") {
         this.toolsUsed += 1;
