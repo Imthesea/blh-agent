@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 // 封装与后端 agent 的事件通信，统一管理会话、消息、工具事件等状态
 import { useAgentEvents } from "./hooks/useAgentEvents";
 // 聊天消息展示面板
@@ -9,6 +9,21 @@ import { InputBar } from "./components/InputBar";
 import { ApprovalModal } from "./components/ApprovalModal";
 // 左侧会话列表侧边栏
 import { SessionSidebar } from "./components/SessionSidebar";
+// 观测页（Overview / Trace / Ops），经 hash 路由切换
+import { OverviewPage } from "./components/observe/OverviewPage";
+import { TracePage } from "./components/observe/TracePage";
+import { OpsPage } from "./components/observe/OpsPage";
+
+/** 监听 location.hash 的轻量路由：聊天为主视图，#/observe/* 切到观测页。 */
+function useHashRoute(): string {
+  const [hash, setHash] = useState(() => window.location.hash);
+  useEffect(() => {
+    const onChange = () => setHash(window.location.hash);
+    window.addEventListener("hashchange", onChange);
+    return () => window.removeEventListener("hashchange", onChange);
+  }, []);
+  return hash;
+}
 
 // 应用根组件
 export function App() {
@@ -16,6 +31,8 @@ export function App() {
   const state = useAgentEvents();
   // 侧边栏是否折叠
   const [collapsed, setCollapsed] = useState(false);
+  const route = useHashRoute();
+  const observePage = route.startsWith("#/observe/") ? route.slice("#/observe/".length) : null;
 
   return (
     // 根据折叠状态拼接样式类名，折叠时额外追加 app-collapsed
@@ -25,28 +42,35 @@ export function App() {
         activeId={state.sessionId}
         loading={state.sessionLoading}
         collapsed={collapsed}
+        route={route}
         onToggle={() => setCollapsed((c) => !c)}
         onNew={() => void state.createSession()}
         onResume={(file) => void state.resume(file)}
         onDelete={(file) => void state.deleteSession(file)}
       />
-      <main className="main">
-        <ChatPanel
-          messages={state.messages}
-          streaming={state.streaming}
-          toolEvents={state.toolEvents}
-          busy={state.busy}
-          approval={state.approval}
-        />
-        {/* 有错误时在顶部显示错误横幅 */}
-        {state.error !== null && <div className="error-banner">{state.error}</div>}
-        <InputBar
-          busy={state.busy}
-          canStop={state.canStop}
-          onSend={(text) => void state.send(text)}
-          onStop={() => void state.stop()}
-        />
-      </main>
+      {observePage === null ? (
+        <main className="main">
+          <ChatPanel
+            messages={state.messages}
+            streaming={state.streaming}
+            toolEvents={state.toolEvents}
+            busy={state.busy}
+            approval={state.approval}
+          />
+          {/* 有错误时在顶部显示错误横幅 */}
+          {state.error !== null && <div className="error-banner">{state.error}</div>}
+          <InputBar
+            busy={state.busy}
+            canStop={state.canStop}
+            onSend={(text) => void state.send(text)}
+            onStop={() => void state.stop()}
+          />
+        </main>
+      ) : (
+        <main className="main observe-main">
+          {observePage === "trace" ? <TracePage /> : observePage === "ops" ? <OpsPage /> : <OverviewPage />}
+        </main>
+      )}
       <ApprovalModal approval={state.approval} onRespond={(d) => void state.respond(d)} />
     </div>
   );

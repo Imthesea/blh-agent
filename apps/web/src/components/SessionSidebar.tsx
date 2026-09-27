@@ -86,12 +86,13 @@ export function SessionSidebar(props: {
   activeId: string | null;
   loading: boolean;
   collapsed: boolean;
+  route: string;
   onToggle(): void;
   onNew(): void;
   onResume(file: string): void;
   onDelete(file: string): void;
 }) {
-  const { sessions, activeId, loading, collapsed, onToggle, onNew, onResume, onDelete } = props;
+  const { sessions, activeId, loading, collapsed, route, onToggle, onNew, onResume, onDelete } = props;
   return (
     <aside className={`sidebar${collapsed ? " sidebar-collapsed" : ""}`}>
       <div className="logo-row">
@@ -135,6 +136,26 @@ export function SessionSidebar(props: {
           </ul>
         )}
       </div>
+
+      <nav className="observe-nav" aria-label="观测页导航">
+        {collapsed ? null : (
+          <>
+            <span className="observe-nav-title">Observe</span>
+            <a className={`observe-link${route === "" || route === "#/" ? " active" : ""}`} href="#/">
+              对话
+            </a>
+            <a className={`observe-link${route === "#/observe/overview" ? " active" : ""}`} href="#/observe/overview">
+              Overview
+            </a>
+            <a className={`observe-link${route === "#/observe/trace" ? " active" : ""}`} href="#/observe/trace">
+              Trace
+            </a>
+            <a className={`observe-link${route === "#/observe/ops" ? " active" : ""}`} href="#/observe/ops">
+              Ops
+            </a>
+          </>
+        )}
+      </nav>
     </aside>
   );
 }
