@@ -38,6 +38,7 @@ import { OpenAIWorkflowRunner } from "../workflow/runtime.js";
 import { WORKFLOWS } from "../workflow/registry.js";
 import { registerWorkflowTools } from "../workflow/tools.js";
 import { initLogger, createLogger } from "@blh/logger";
+import { Tracer } from "../tracing/tracer.js";
 
 const log = createLogger("cli.buildHarness");
 
@@ -74,12 +75,15 @@ export function buildHarness(
   opts?: {
     userRules?: PermissionRule[];
     persistRule?: (rule: PermissionRule) => void;
+    approvalSource?: "cli" | "web";
   },
 ): Harness {
   // 加载配置：合并工作目录、CLI 参数等，得到一份统一配置。
   const config = loadConfig(workdir, cli);
   // 初始化日志系统：让后续所有日志都写入工作目录下统一管理。
   initLogger(config.workdir);
+  // 创建 tracer：全链路事件落盘到 <workdir>/.blh/traces，失败静默不影响主流程。
+  const tracer = new Tracer(config.workdir);
 
   // 创建模型提供者：按 config.provider 走对应厂商适配器（这是所有「用模型」能力的底层）。
   const provider = createProvider(config);
@@ -100,7 +104,7 @@ export function buildHarness(
 
   // 创建权限拦截钩子，并挂到「工具执行前」这个节点上。
   // 这样每次模型想调用工具时，都会先经过权限校验，按规则放行或询问用户。
-  const permissionHook = makePermissionHook(rules, askUser, opts?.persistRule);
+  const permissionHook = makePermissionHook(rules, askUser, opts?.persistRule, tracer, opts?.approvalSource ?? "cli");
   hooks.register(PRE_TOOL_USE, (payload) => permissionHook(payload.name, payload.input));
 
   // 注册上下文压缩工具：给模型一个能主动触发压缩历史对话的工具。
@@ -115,7 +119,7 @@ export function buildHarness(
 
   // 创建记忆系统：负责「读记忆（召回）」和「写记忆（提取）」。
   // 记忆数据落在 .memory 目录下，用同一个 provider 来做召回/提取时的模型调用。
-  const memory = new Memory(new MemoryStore(path.join(config.workdir, ".memory")), provider);
+  const memory = new Memory(new MemoryStore(path.join(config.workdir, ".memory")), provider, tracer);
 
   // 创建定时任务调度器，并从磁盘恢复之前保存的定时任务。
   const cron = new CronScheduler(path.join(config.workdir, ".scheduled_tasks.json"));
@@ -133,6 +137,7 @@ export function buildHarness(
   const compactor = new ContextCompactor({
     provider,
     toolResultsDir: path.join(config.workdir, ".task_outputs", "tool-results"),
+    tracer,
   });
 
   // 创建多智能体团队运行时：支持派生「队友」智能体协作，通过消息总线互相通信、审批计划。
@@ -148,7 +153,7 @@ export function buildHarness(
   );
 
   // 创建子智能体运行器：跑一个一次性、带独立上下文的嵌套任务，只返回最终文本。
-  const subagent = new SubagentRunner(provider, config, hooks);
+  const subagent = new SubagentRunner(provider, config, hooks, tracer);
   // 注册智能体相关工具：让主智能体能派生子智能体、管理队友等。
   registerAgentTools(tools, subagent, agents);
 
@@ -169,11 +174,11 @@ export function buildHarness(
   // 创建工作流运行时存储目录，并注册工作流相关工具。
   // 工作流允许把多个模型调用编排成多阶段流程。
   const workflowStore = path.join(config.workdir, ".workflow_runtime");
-  registerWorkflowTools(tools, workflowStore, () => new OpenAIWorkflowRunner(provider), WORKFLOWS);
+  registerWorkflowTools(tools, workflowStore, () => new OpenAIWorkflowRunner(provider), WORKFLOWS, tracer);
 
   // 创建目标控制器：跟踪当前目标，并在每轮结束后用模型判断目标是否已达成。
   const goal = new GoalController(new PromptGoalEvaluator(provider));
 
   // 把所有子系统汇总成一个 Harness 返回，作为整个程序的运行入口。
-  return new Harness(config, provider, tools, hooks, compactor, todoManager, memory, jobs, agents, extensions, goal, workflowStore);
+  return new Harness(config, provider, tools, hooks, compactor, todoManager, memory, jobs, agents, extensions, goal, workflowStore, tracer);
 }

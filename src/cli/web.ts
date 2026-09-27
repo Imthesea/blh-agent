@@ -11,6 +11,7 @@ const buildHarnessForWeb: BuildHarness = (deps) =>
   buildHarness(deps.workdir, deps.cli, deps.askUser, deps.skipPermissions, {
     userRules: deps.userRules,
     persistRule: deps.persistRule,
+    approvalSource: "web",
   });
 
 /** 生产模式下前端静态目录；dev 返回 null（Vite 提供）。 */
