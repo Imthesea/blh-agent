@@ -1,4 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
+import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { Tracer } from "../../src/tracing/tracer.js";
 import { makePermissionHook, runInScheduledTurn } from "../../src/security/approval.js";
 import {
   DEFAULT_RULES,
@@ -113,5 +117,69 @@ describe("makePermissionHook（破坏性命令硬拦截）", () => {
     const hook = makePermissionHook(SKIP_PERMISSIONS_RULES, ask);
     expect(await hook("bash", { command: "ls" })).toBeNull();
     expect(ask).not.toHaveBeenCalled();
+  });
+});
+
+describe("makePermissionHook（trace 事件）", () => {
+  function readTraceEvents(workdir: string): Array<Record<string, unknown>> {
+    const dir = path.join(workdir, ".blh", "traces");
+    return readdirSync(dir)
+      .filter((f) => f.endsWith(".jsonl"))
+      .flatMap((f) =>
+        readFileSync(path.join(dir, f), "utf8")
+          .split("\n")
+          .filter(Boolean)
+          .map((l) => JSON.parse(l) as Record<string, unknown>),
+      );
+  }
+
+  it("用户拒绝时记录 deny/user 事件（source=web）", async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "blh-trace-approval-"));
+    const tracer = new Tracer(dir);
+    const hook = makePermissionHook(DEFAULT_RULES, async () => "deny", undefined, tracer, "web");
+    expect(await hook("bash", { command: "ls" })).toBe("denied by user");
+    const events = readTraceEvents(dir);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "approval",
+      tool: "bash",
+      decision: "deny",
+      rule: "user",
+      source: "web",
+    });
+  });
+
+  it("规则放行时记录 allow/matched_rule 事件（默认 source=cli）", async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "blh-trace-approval-"));
+    const tracer = new Tracer(dir);
+    const rules: PermissionRule[] = [{ tool: "bash", target: "ls", action: "allow" }];
+    const hook = makePermissionHook(rules, async () => "deny", undefined, tracer);
+    expect(await hook("bash", { command: "ls" })).toBeNull();
+    expect(readTraceEvents(dir)[0]).toMatchObject({
+      type: "approval",
+      tool: "bash",
+      decision: "allow",
+      rule: "matched_rule",
+      source: "cli",
+    });
+  });
+
+  it("always_allow 记录 allow/new_rule 事件", async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "blh-trace-approval-"));
+    const tracer = new Tracer(dir);
+    const hook = makePermissionHook([...DEFAULT_RULES], async () => "always_allow", undefined, tracer);
+    expect(await hook("bash", { command: "ls -la" })).toBeNull();
+    expect(readTraceEvents(dir)[0]).toMatchObject({
+      type: "approval",
+      tool: "bash",
+      decision: "allow",
+      rule: "new_rule",
+      source: "cli",
+    });
+  });
+
+  it("不传 tracer 时行为不变（向后兼容）", async () => {
+    const hook = makePermissionHook(DEFAULT_RULES, async () => "allow");
+    expect(await hook("bash", { command: "ls" })).toBeNull();
   });
 });

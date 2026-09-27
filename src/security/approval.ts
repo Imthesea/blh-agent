@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import type { PermissionRule } from "./rules.js";
 import { insertUserRule, isDestructiveBashCommand, matchRule } from "./rules.js";
 import { createLogger } from "@blh/logger";
+import type { Tracer } from "../tracing/tracer.js";
 
 const log = createLogger("security.approval");
 
@@ -33,6 +34,8 @@ export function makePermissionHook(
   rules: PermissionRule[],
   ask?: ApprovalAsker,
   persistRule?: (rule: PermissionRule) => void,
+  tracer?: Tracer,
+  source: "cli" | "web" = "cli",
 ): PermissionHook {
   const hasAsker = ask !== undefined;
   const asker: ApprovalAsker = ask ?? (async () => "deny");
@@ -44,25 +47,38 @@ export function makePermissionHook(
       "";
     if (tool === "bash" && isDestructiveBashCommand(target)) {
       log.warn("denied by rule (destructive)", { tool, target });
+      tracer?.event("approval", { tool, decision: "deny", rule: "destructive_bash", source });
       return `denied by permission rule (${tool}: ${target})`;
     }
     const action = matchRule(rules, tool, target);
-    if (action === "allow") return null;
+    if (action === "allow") {
+      tracer?.event("approval", { tool, decision: "allow", rule: "matched_rule", source });
+      return null;
+    }
     if (action === "deny") {
       log.warn("denied by rule", { tool, target });
+      tracer?.event("approval", { tool, decision: "deny", rule: "matched_rule", source });
       return `denied by permission rule (${tool}: ${target})`;
     }
     if (scheduledTurnStorage.getStore() === true) {
+      tracer?.event("approval", { tool, decision: "deny", rule: "scheduled_turn", source });
       return "denied: cannot request approval from a scheduled turn";
     }
     const decision = await asker({ tool, target, args });
     if (decision === "deny") {
+      tracer?.event("approval", { tool, decision: "deny", rule: hasAsker ? "user" : "no_asker", source });
       if (!hasAsker) {
         return "denied: no approval asker available (non-interactive mode); use --dangerously-skip-permissions to allow non-destructive bash";
       }
       log.warn("denied by user", { tool, target });
       return "denied by user";
     }
+    tracer?.event("approval", {
+      tool,
+      decision: "allow",
+      rule: decision === "always_allow" && target !== "" ? "new_rule" : "user",
+      source,
+    });
     if (decision === "always_allow" && target !== "") {
       const rule: PermissionRule = { tool, target, action: "allow" };
       insertUserRule(rules, rule);
