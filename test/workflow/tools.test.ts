@@ -3,7 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, expect, it } from "vitest";
 import { ToolRegistry } from "../../src/tools/registry.js";
-import { MockWorkflowRunner } from "../../src/workflow/runtime.js";
+import { MockWorkflowRunner, type WorkflowRegistry } from "../../src/workflow/runtime.js";
 import { WORKFLOWS } from "../../src/workflow/registry.js";
 import { registerWorkflowTools } from "../../src/workflow/tools.js";
 import { Tracer } from "../../src/tracing/tracer.js";
@@ -38,6 +38,29 @@ describe("registerWorkflowTools", () => {
       expect(events[1]).toMatchObject({ type: "workflow", workflow: "review-changes", status: "ok" });
       expect(events[2]).toMatchObject({ type: "workflow", workflow: "no-such-workflow", status: "start" });
       expect(events[3]).toMatchObject({ type: "workflow", workflow: "no-such-workflow", status: "error" });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("records error for a workflow that fails during execution", async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "wf-trace-fail-"));
+    try {
+      const tracer = new Tracer(dir);
+      const registry = new ToolRegistry();
+      const failing: WorkflowRegistry = new Map([
+        ["boom", [{ name: "boom", description: "always fails" }, async () => { throw new Error("kaboom"); }]],
+      ]);
+      registerWorkflowTools(registry, path.join(dir, ".workflow_runtime"), () => new MockWorkflowRunner(), failing, tracer);
+      await registry.dispatch("run_workflow", { name: "boom" });
+      const tracesDir = path.join(dir, ".blh", "traces");
+      const events = readdirSync(tracesDir)
+        .filter((f) => f.endsWith(".jsonl"))
+        .flatMap((f) =>
+          readFileSync(path.join(tracesDir, f), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>),
+        );
+      expect(events[0]).toMatchObject({ type: "workflow", workflow: "boom", status: "start" });
+      expect(events[1]).toMatchObject({ type: "workflow", workflow: "boom", status: "error" });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

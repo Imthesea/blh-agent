@@ -35,7 +35,8 @@ export function registerWorkflowTools(
             : undefined;
         const resume = typeof a.resume_from_run_id === "string" ? a.resume_from_run_id : undefined;
         const result = await runWorkflow(name, args, resume, store, runnerFactory, workflows);
-        tracer?.event("workflow", { workflow: name, stage: "run", status: "ok", latency_ms: Date.now() - start });
+        const status = result.task.status === "failed" ? "error" : "ok";
+        tracer?.event("workflow", { workflow: name, stage: "run", status, latency_ms: Date.now() - start });
         return JSON.stringify(result);
       } catch (error) {
         tracer?.event("workflow", { workflow: name, stage: "run", status: "error", latency_ms: Date.now() - start });
