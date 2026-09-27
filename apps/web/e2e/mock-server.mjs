@@ -7,6 +7,34 @@ const sessions = [
   { file: "session_1.jsonl", mtime: Date.now(), preview: "历史会话" },
 ];
 
+const traceOverview = {
+  usage: {
+    total: { in: 12000, out: 3000, costUsd: 0.42 },
+    byDay: {
+      "2026-09-26": { in: 4000, out: 1000, costUsd: 0.14 },
+      "2026-09-27": { in: 8000, out: 2000, costUsd: 0.28 },
+    },
+    byProvider: { deepseek: { in: 12000, out: 3000, costUsd: 0.42 } },
+    byModel: { "deepseek-chat": { in: 12000, out: 3000, costUsd: 0.42 } },
+  },
+  today: { turns: 3, tools: 5, avgLatencyMs: 1500 },
+  recentTurns: [
+    {
+      turn: 3,
+      sid: "session_1.jsonl",
+      userMessage: "查一下 trace 文件",
+      startedAt: Date.now(),
+      finished: true,
+      cancelled: false,
+      latencyMs: 2100,
+      iterations: 2,
+      toolsUsed: 1,
+      costUsd: 0.003,
+      events: [],
+    },
+  ],
+};
+
 function sse(res) {
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
@@ -133,6 +161,11 @@ const server = http.createServer(async (req, res) => {
     sessions.splice(0, sessions.length, { file: "session_1.jsonl", mtime: Date.now(), preview: "历史会话" });
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+  if (method === "GET" && pathname === "/api/trace/overview") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(traceOverview));
     return;
   }
   res.writeHead(404, { "Content-Type": "application/json" });

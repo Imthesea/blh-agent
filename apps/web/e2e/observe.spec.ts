@@ -29,3 +29,12 @@ test("深链接直接打开 Ops 页", async ({ page }) => {
   await page.goto("/#/observe/ops");
   await expect(page.getByRole("heading", { name: "Ops" })).toBeVisible();
 });
+
+test("Overview 页显示统计卡片、成本图与最近 turns", async ({ page }) => {
+  await page.goto("/#/observe/overview");
+  await expect(page.locator(".stat-card", { hasText: "总花费" })).toContainText("$0.4200");
+  await expect(page.locator(".stat-card", { hasText: "今日 turns" })).toContainText("3");
+  await expect(page.locator(".stat-card", { hasText: "平均延迟" })).toContainText("1.5s");
+  await expect(page.locator(".cost-bar-col")).toHaveCount(2);
+  await expect(page.getByText("查一下 trace 文件")).toBeVisible();
+});
