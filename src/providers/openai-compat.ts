@@ -67,6 +67,7 @@ function fromOpenAIMessage(message: OpenAI.ChatCompletionMessage): ChatMessage {
 
 export class OpenAICompatProvider implements ChatProvider {
   private readonly client: ChatCompletionsClient;
+  private last: ChatUsage | undefined;
 
   constructor(
     private readonly config: Config,
@@ -116,6 +117,9 @@ export class OpenAICompatProvider implements ChatProvider {
     const message = response.choices[0]?.message;
     if (!message) throw new Error("provider returned no choices");
     log.debug("chat response", { toolCalls: message.tool_calls?.length ?? 0 });
+    if (response.usage) {
+      this.last = { promptTokens: response.usage.prompt_tokens, completionTokens: response.usage.completion_tokens };
+    }
     return fromOpenAIMessage(message);
   }
 
@@ -136,6 +140,9 @@ export class OpenAICompatProvider implements ChatProvider {
       promptTokens: response.usage?.prompt_tokens ?? 0,
       completionTokens: response.usage?.completion_tokens ?? 0,
     });
+    if (response.usage) {
+      this.last = { promptTokens: response.usage.prompt_tokens, completionTokens: response.usage.completion_tokens };
+    }
     return {
       message: fromOpenAIMessage(message),
       usage: {
@@ -220,5 +227,9 @@ export class OpenAICompatProvider implements ChatProvider {
       ...(toolCalls.length ? { tool_calls: toolCalls } : {}),
     };
     yield { type: "done", message, ...(usage ? { usage } : {}) };
+  }
+
+  lastUsage(): ChatUsage | undefined {
+    return this.last;
   }
 }

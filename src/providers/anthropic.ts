@@ -98,6 +98,7 @@ function toAnthropicTools(tools: ToolDefinition[]): Anthropic.Tool[] {
 
 export class AnthropicProvider implements ChatProvider {
   private readonly client: AnthropicClient;
+  private last: ChatUsage | undefined;
 
   constructor(
     private readonly config: Config,
@@ -131,6 +132,9 @@ export class AnthropicProvider implements ChatProvider {
       ),
     );
     log.debug("chat response", { toolCalls: response.content.filter((b) => b.type === "tool_use").length });
+    if (response.usage) {
+      this.last = { promptTokens: response.usage.input_tokens, completionTokens: response.usage.output_tokens };
+    }
     return fromAnthropicMessage(response);
   }
 
@@ -148,6 +152,9 @@ export class AnthropicProvider implements ChatProvider {
         messages: anthropicMessages,
       }),
     );
+    if (response.usage) {
+      this.last = { promptTokens: response.usage.input_tokens, completionTokens: response.usage.output_tokens };
+    }
     return {
       message: fromAnthropicMessage(response),
       usage: {
@@ -214,5 +221,9 @@ export class AnthropicProvider implements ChatProvider {
       ...(toolCalls.length ? { tool_calls: toolCalls } : {}),
     };
     yield { type: "done", message, ...(usage ? { usage } : {}) };
+  }
+
+  lastUsage(): ChatUsage | undefined {
+    return this.last;
   }
 }

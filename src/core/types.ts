@@ -88,6 +88,8 @@ export interface ChatProvider {
   stream?(messages: ChatMessage[], tools: ToolDefinition[], maxTokens?: number, signal?: AbortSignal): AsyncIterable<ProviderStreamEvent>;
   /** 无 tools 单轮并返回 usage（供 workflow 记账）。可选：未实现时 workflow 不可用。 */
   chatCompletion?(messages: ChatMessage[], maxTokens?: number): Promise<{ message: ChatMessage; usage: ChatUsage }>;
+  /** 最近一次 chat()/chatCompletion() 的 token 用量（非流式路径记账用）；未实现或未调用时返回 undefined。 */
+  lastUsage?(): ChatUsage | undefined;
 }
 
 /** 一次 LLM 调用的 token 用量 */

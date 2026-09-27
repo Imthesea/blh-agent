@@ -186,3 +186,35 @@ describe("OpenAICompatProvider.stream", () => {
     expect(events.filter((e) => e.type === "tool_call_delta")).toHaveLength(3);
   });
 });
+
+describe("lastUsage", () => {
+  it("chat() 后返回最近一次 usage；chatCompletion() 覆盖更新", async () => {
+    const { OpenAICompatProvider } = await import("../../src/providers/openai-compat.js");
+    const create = vi.fn().mockResolvedValue({
+      choices: [{ message: { role: "assistant", content: "hi" }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 11, completion_tokens: 7 },
+    });
+    const provider = new OpenAICompatProvider(config, makeClient(create));
+    expect(provider.lastUsage()).toBeUndefined();
+    await provider.chat([{ role: "user", content: "hi" }], []);
+    expect(provider.lastUsage()).toEqual({ promptTokens: 11, completionTokens: 7 });
+
+    const create2 = vi.fn().mockResolvedValue({
+      choices: [{ message: { role: "assistant", content: '{"ok":true}' }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 3, completion_tokens: 2 },
+    });
+    const provider2 = new OpenAICompatProvider(config, makeClient(create2));
+    await provider2.chatCompletion?.([{ role: "user", content: "hi" }]);
+    expect(provider2.lastUsage()).toEqual({ promptTokens: 3, completionTokens: 2 });
+  });
+
+  it("usage 缺失时 lastUsage 保持 undefined", async () => {
+    const { OpenAICompatProvider } = await import("../../src/providers/openai-compat.js");
+    const create = vi.fn().mockResolvedValue({
+      choices: [{ message: { role: "assistant", content: "hi" }, finish_reason: "stop" }],
+    });
+    const provider = new OpenAICompatProvider(config, makeClient(create));
+    await provider.chat([{ role: "user", content: "hi" }], []);
+    expect(provider.lastUsage()).toBeUndefined();
+  });
+});

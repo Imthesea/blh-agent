@@ -1,8 +1,13 @@
-import type { ChatMessage, ChatProvider, ToolDefinition } from "../../src/core/types.js";
+import type { ChatMessage, ChatProvider, ChatUsage, ToolDefinition } from "../../src/core/types.js";
 
 /** 脚本化 provider：每次 chat 弹出队列头部消息 */
 export class MockProvider implements ChatProvider {
   calls = 0;
+  usage: ChatUsage | undefined = { promptTokens: 10, completionTokens: 5 };
+
+  lastUsage(): ChatUsage | undefined {
+    return this.usage;
+  }
   constructor(private readonly script: ChatMessage[]) {}
   async chat(
     _messages: ChatMessage[],

@@ -114,3 +114,30 @@ describe("AnthropicProvider", () => {
     ]);
   });
 });
+
+describe("lastUsage", () => {
+  it("chat() 后返回最近一次 usage", async () => {
+    const { AnthropicProvider } = await import("../../src/providers/anthropic.js");
+    const create = vi.fn().mockResolvedValue({
+      content: [{ type: "text", text: "hi" }],
+      stop_reason: "end_turn",
+      usage: { input_tokens: 10, output_tokens: 2 },
+    });
+    const provider = new AnthropicProvider(config, makeClient(create));
+    expect(provider.lastUsage()).toBeUndefined();
+    await provider.chat([{ role: "user", content: "hi" }], []);
+    expect(provider.lastUsage()).toEqual({ promptTokens: 10, completionTokens: 2 });
+  });
+
+  it("chatCompletion() 后返回最近一次 usage", async () => {
+    const { AnthropicProvider } = await import("../../src/providers/anthropic.js");
+    const create = vi.fn().mockResolvedValue({
+      content: [{ type: "text", text: "hi" }],
+      stop_reason: "end_turn",
+      usage: { input_tokens: 4, output_tokens: 3 },
+    });
+    const provider = new AnthropicProvider(config, makeClient(create));
+    await provider.chatCompletion?.([{ role: "user", content: "hi" }]);
+    expect(provider.lastUsage()).toEqual({ promptTokens: 4, completionTokens: 3 });
+  });
+});
