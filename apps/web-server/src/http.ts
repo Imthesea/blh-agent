@@ -9,7 +9,8 @@ import * as path from "node:path";
 import type { ApprovalDecision } from "./types.js";
 import type { SessionManager } from "./session.js";
 import type { SSEBroadcaster } from "./bridge.js";
-import type { SessionStoreModule } from "./types.js";
+import type { SessionStoreModule, TraceModule } from "./types.js";
+import { handleTraceApi } from "./trace.js";
 import { appendRawEntry, createLogger, isLogLevel } from "@blh/logger";
 
 const CONTENT_TYPES: Record<string, string> = {
@@ -45,6 +46,8 @@ export interface WebContext {
   /** 前端静态目录；dev 模式为 null（页面由 Vite dev server 提供）。 */
   staticDir: string | null;
   sessionStore: SessionStoreModule;
+  /** 可选 trace 读取模块；未注入时 /api/trace/* 返回 404。 */
+  trace?: TraceModule;
 }
 
 class HttpError extends Error {
@@ -168,6 +171,10 @@ async function handleApi(
   method: string,
   pathname: string,
 ): Promise<void> {
+  if (pathname.startsWith("/api/trace/")) {
+    handleTraceApi(res, ctx, method, new URL(req.url ?? "/", "http://127.0.0.1"));
+    return;
+  }
   if (method !== "GET" && method !== "HEAD" && req.headers[CSRF_HEADER] !== "1") {
     json(res, 403, { error: "forbidden" });
     return;

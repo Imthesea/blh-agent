@@ -2,12 +2,12 @@ import { createWebServer } from "./http.js";
 import { SSEBroadcaster } from "./bridge.js";
 import { ApprovalCoordinator, loadUserRules, persistUserRule } from "./approval.js";
 import { SessionManager } from "./session.js";
-import type { BuildHarness, SessionStoreModule } from "./types.js";
+import type { BuildHarness, SessionStoreModule, TraceModule } from "./types.js";
 import { createLogger, initLogger } from "@blh/logger";
 
 const log = createLogger("web-server.index");
 
-export type { BuildHarness, SessionStoreModule } from "./types.js";
+export type { BuildHarness, SessionStoreModule, TraceModule } from "./types.js";
 export type { WebEvent, AgentEvent } from "./bridge.js";
 
 export interface WebServerOptions {
@@ -19,6 +19,8 @@ export interface WebServerOptions {
   skipPermissions?: boolean;
   sessionStore: SessionStoreModule;
   buildHarness: BuildHarness;
+  /** 可选 trace 读取模块（根包注入 createTraceModule(config.workdir)）。 */
+  trace?: TraceModule;
 }
 
 export interface RunningWebServer {
@@ -66,6 +68,7 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
     workdir,
     sessionStore: options.sessionStore,
     staticDir: options.staticDir ?? null,
+    ...(options.trace !== undefined ? { trace: options.trace } : {}),
   });
 
   const port = options.port !== undefined && Number.isInteger(options.port) ? options.port : 8123;

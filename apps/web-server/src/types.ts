@@ -91,3 +91,11 @@ export interface BuildHarnessDeps {
 export type BuildHarness = (deps: BuildHarnessDeps) => WebTurnRunner & {
   jobs?: { agentLock: TurnLock } | undefined;
 };
+
+/** Trace 读取模块的最小接口（根包 src/tracing/module.ts 的 createTraceModule 满足）。 */
+export interface TraceModule {
+  overview(): unknown;
+  turns(opts?: { date?: string; sid?: string; limit?: number }): unknown;
+  events(cursor: number, date?: string): unknown;
+  files(): unknown;
+}
