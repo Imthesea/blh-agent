@@ -3,7 +3,7 @@ import { createLogger } from "@blh/logger";
 
 const log = createLogger("web-client.api");
 
-async function request<T = unknown>(path: string, init?: RequestInit): Promise<T> {
+export async function request<T = unknown>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   headers.set("x-blh-web", "1");
   const res = await fetch(path, { ...init, headers });
