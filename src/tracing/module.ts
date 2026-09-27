@@ -11,6 +11,13 @@ export interface TraceOverview {
   recentTurns: FoldedTurn[];
 }
 
+export interface TraceModule {
+  overview(): TraceOverview;
+  turns(opts?: { date?: string; sid?: string; limit?: number }): FoldedTurn[];
+  events(cursor: number, date?: string): { events: TraceEvent[]; nextCursor: number };
+  files(): string[];
+}
+
 const FILE_RE = /^(\d{4}-\d{2}-\d{2})\.jsonl$/;
 
 function listDates(workdir: string): string[] {
@@ -31,7 +38,7 @@ function readDay(workdir: string, date: string): TraceEvent[] {
   return readTraceFile(path.join(Tracer.tracesDir(workdir), `${date}.jsonl`));
 }
 
-export function createTraceModule(workdir: string): unknown {
+export function createTraceModule(workdir: string): TraceModule {
   return {
     overview(): TraceOverview {
       const events = readDay(workdir, localDate());

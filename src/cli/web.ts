@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { startWebServer, type BuildHarness, type TraceModule } from "@blh/web-server";
+import { startWebServer, type BuildHarness } from "@blh/web-server";
 import { buildHarness } from "./buildHarness.js";
 import { loadConfig } from "../core/config.js";
 import { SessionStore } from "../session/store.js";
@@ -43,7 +43,7 @@ export function startWebServerFromCli(options: StartWebFromCliOptions) {
     sessionStore: SessionStore,
     buildHarness: buildHarnessForWeb,
     staticDir: staticDir(options.dev ?? false),
-    trace: createTraceModule(config.workdir) as TraceModule,
+    trace: createTraceModule(config.workdir),
     ...(options.port !== undefined ? { port: options.port } : {}),
     ...(options.skipPermissions !== undefined ? { skipPermissions: options.skipPermissions } : {}),
   });
