@@ -1,9 +1,10 @@
-import { readFileSync, mkdtempSync, rmSync, existsSync } from "node:fs";
+import { readFileSync, mkdtempSync, rmSync, existsSync, readdirSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SubagentRunner } from "../../src/agents/subagent.js";
 import { HookBus, PRE_TOOL_USE } from "../../src/core/hooks.js";
+import { Tracer } from "../../src/tracing/tracer.js";
 import type { ChatMessage, ChatProvider, Config, ToolDefinition } from "../../src/core/types.js";
 import { MockProvider, makeTextMessage, makeToolCallMessage } from "../integration/helpers.js";
 
@@ -72,5 +73,20 @@ describe("SubagentRunner", () => {
     const result = await runner.run("loop forever");
     expect(result).toContain("30 turns");
     expect(provider.calls).toBe(30);
+  });
+
+  it("records spawn/result trace events", async () => {
+    const tracer = new Tracer(tmpDir);
+    const runner = new SubagentRunner(new MockProvider([makeTextMessage("done")]), config, new HookBus(), tracer);
+    await runner.run("do it");
+    const dir = path.join(tmpDir, ".blh", "traces");
+    const events = readdirSync(dir)
+      .filter((f) => f.endsWith(".jsonl"))
+      .flatMap((f) =>
+        readFileSync(path.join(dir, f), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>),
+      );
+    expect(events[0]).toMatchObject({ type: "subagent", status: "spawn", task: "do it" });
+    expect(events[1]).toMatchObject({ type: "subagent", status: "result" });
+    expect(typeof events[1]?.["latency_ms"]).toBe("number");
   });
 });

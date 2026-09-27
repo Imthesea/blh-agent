@@ -4,6 +4,7 @@ import { parseToolArguments } from "../core/parse-args.js";
 import type { ChatMessage, ChatProvider, Config, ToolCall } from "../core/types.js";
 import { registerBuiltinTools } from "../tools/index.js";
 import { ToolRegistry } from "../tools/registry.js";
+import { summarize, type Tracer } from "../tracing/tracer.js";
 
 const SUB_SYSTEM =
   "你是一个编程智能体。完成给定的任务，然后返回一个简洁的最终回答。";
@@ -21,6 +22,7 @@ export class SubagentRunner {
     readonly provider: ChatProvider,
     readonly config: Config,
     readonly hooks: HookBus,
+    readonly tracer?: Tracer,
   ) {
     registerBuiltinTools(this.tools, config);
   }
@@ -31,6 +33,8 @@ export class SubagentRunner {
    * 超过 30 轮还没结束，就返回一条提示说明。
    */
   async run(prompt: string): Promise<string> {
+    const start = Date.now();
+    this.tracer?.event("subagent", { name: "subagent", status: "spawn", task: summarize(prompt, 200) });
     const messages: ChatMessage[] = [
       { role: "system", content: SUB_SYSTEM },
       { role: "user", content: prompt },
@@ -40,6 +44,7 @@ export class SubagentRunner {
       messages.push(assistant);
       const toolCalls: ToolCall[] = assistant.tool_calls ?? [];
       if (toolCalls.length === 0) {
+        this.tracer?.event("subagent", { name: "subagent", status: "result", latency_ms: Date.now() - start });
         return assistant.content || "(no summary)";
       }
       for (const call of toolCalls) {
@@ -56,6 +61,7 @@ export class SubagentRunner {
         messages.push({ role: "tool", tool_call_id: call.id, content: result });
       }
     }
+    this.tracer?.event("subagent", { name: "subagent", status: "result", latency_ms: Date.now() - start });
     return "Subagent stopped after 30 turns without a final answer.";
   }
 }
