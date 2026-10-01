@@ -28,6 +28,10 @@ export interface TurnRunner {
   goal?: GoalController | undefined;
   /** 可选：把输入解析成 /goal 命令。 */
   goalCommand?: (text: string) => GoalCommand;
+  /** 可选：dream 是否到期。 */
+  isDreamDue?(): Promise<boolean>;
+  /** 可选：跑一轮 autodream（记忆深度整理）。 */
+  runDreamTurn?(messages: ChatMessage[], signal?: AbortSignal): Promise<void>;
 }
 
 /** 命令行输入输出接口（repl 用它和终端交互，不直接碰 readline）。 */
@@ -162,6 +166,8 @@ export async function repl(
   const runTeamTurn = agent.runTeamTurn?.bind(agent);
   const goal = agent.goal;
   const goalCommand = agent.goalCommand?.bind(agent);
+  const isDreamDue = agent.isDreamDue?.bind(agent);
+  const runDreamTurn = agent.runDreamTurn?.bind(agent);
   try {
     // 接上定时任务：注册一个回调，定时器触发时跑一轮定时任务，再把本轮新增的回复打印出来。
     if (jobs !== undefined && runScheduledTurn !== undefined) {
@@ -173,6 +179,15 @@ export async function repl(
       });
       // 启动定时调度。
       jobs.start();
+    }
+    // 接上 autodream：到期时跑一轮记忆深度整理，打印新增回复。
+    if (jobs !== undefined && isDreamDue !== undefined && runDreamTurn !== undefined) {
+      jobs.setDreamTurn(isDreamDue, async (signal) => {
+        const before = messages.length;
+        await runDreamTurn(messages, signal);
+        const reply = lastAssistantText(messages, before);
+        if (reply) io.print(reply);
+      });
     }
     // 接上团队任务：注册一个回调，队友消息到达时跑一轮团队任务，同样打印新增回复。
     if (agents !== undefined && runTeamTurn !== undefined) {
@@ -243,6 +258,8 @@ export async function repl(
         };
         // 有后台任务运行时，用锁串行执行本轮，避免和定时/团队任务并发冲突。
         if (jobs !== undefined) {
+          // 用户提交优先：中断进行中的 dream（其内部回滚后释放锁），再排队拿锁。
+          jobs.abortDream();
           await jobs.agentLock.withLock(run);
         } else {
           await run();
