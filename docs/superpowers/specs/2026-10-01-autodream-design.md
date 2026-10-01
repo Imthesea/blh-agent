@@ -28,7 +28,7 @@
 | 快照与回滚 | **系统侧**执行：dream 前内存快照全部记忆文件；agentLoop 异常或产出校验失败 → 恢复快照 + 重建索引。复用 `consolidateMemories` 的快照思路 |
 | 写权限 | dream turn 内写操作白名单：仅允许 `.memory/` 内路径（新增 `runInDreamTurn` 上下文 + permission hook 检查），读不限 |
 | 内联 consolidate | **零改动**。分工：consolidate 管 24h 窗口内数量暴涨（即时、热路径），dream 管每日深度整理（定期、后台） |
-| 中断语义 | dream turn 随时可安全 abort——快照回滚保证不留半成品。本期不接用户提交时主动 abort（列为后续项） |
+| 中断语义 | **用户优先**：用户提交消息时主动 abort 进行中的 dream——agentLoop 传入 AbortSignal（`loop.ts` 原生支持 `signal?.aborted` 检查），abort 后快照回滚、释放锁，dream 记为失败 1h 后重试 |
 
 ## 3. 架构与组件
 
@@ -36,11 +36,13 @@
 src/memory/dream.ts        新增：MemoryDream（due 判断 + 状态读写）+ DREAM_PROMPT + 常量
 src/core/harness.ts        新增 runDreamTurn(messages)：快照 → agentLoop → rebuildIndex + 校验 → 回滚
                            runTurn 尾部加 dream 检查；MemoryHandle 挂上 dream 字段
-src/jobs/runtime.ts        新增 dream 通道：setDreamTurn + isDreamDue 回调，processQueue 里优先于 cron 处理
+src/jobs/runtime.ts        新增 dream 通道：setDreamTurn + isDreamDue 回调，processQueue 里优先于 cron 处理；
+                           持有 dream 的 AbortController，暴露 abortDream() 供用户轮次抢占
 src/security/approval.ts   新增 runInDreamTurn 上下文；makePermissionHook 内：dream 上下文中写类工具
                            （args.path 存在且非读操作）目标必须位于 .memory/ 内，否则 deny
-src/cli/repl.ts            接线：启动时检查 + setDreamTurn（对齐现有 setCronTurn 的接法）
-src/web/server.ts          接线：同 repl.ts
+src/cli/repl.ts            接线：启动时检查 + setDreamTurn（对齐现有 setCronTurn 的接法）；
+                           用户提交、获取 agentLock 之前先调 jobs.abortDream()
+src/web/server.ts          接线：同 repl.ts（用户消息到达同样先 abortDream）
 ```
 
 改动量估算：dream.ts ~120 行（含 DREAM_PROMPT），harness ~40 行，runtime ~15 行，approval ~15 行，接线 ~15 行。`extract.ts` / `recall.ts` / `store.ts` 零改动。
@@ -81,14 +83,16 @@ export class MemoryDream {
   └─ harness.runDreamTurn(messages)：
        1. 快照：读取 .memory/ 全部记忆文件内容到内存（含 MEMORY.md）
        2. 注入：messages.push({ role: "user", content: "[Scheduled] " + DREAM_PROMPT })
-       3. agentLoop(this, onEvent, messages, undefined, true)（scheduled turn 上下文，
-          叠一层 runInDreamTurn 限制写路径）
+       3. agentLoop(this, onEvent, messages, dreamAbort.signal, true)（scheduled turn 上下文，
+          叠一层 runInDreamTurn 限制写路径）；signal 来自 JobsRuntime 持有的 AbortController，
+          用户提交触发 abortDream() 时，agentLoop 在下一次 signal 检查点退出（至多多等
+          当前这一次工具调用/模型响应结束）
        4. 系统收尾（agent 不可信，机械操作全在这里）：
           a. store.rebuildMemoryIndex()
           b. 校验：每个 .md 都能 parseFrontmatter 出合法 name/description/type，且条数 > 0
           c. 校验失败或 agentLoop 抛异常 → 从快照恢复全部文件 + rebuildMemoryIndex()
        5. 成功：dream.markSuccess()；tracer 记录 dream_end { before, after }
-          失败：tracer 记录 dream_rollback；lastDreamAt 不变，1 小时后可重试
+          失败（含被用户 abort）：tracer 记录 dream_rollback；lastDreamAt 不变，1 小时后可重试
 ```
 
 与 `runScheduledTurn` 一致的消息处理：注入的 dream 消息在 `finally` 里 splice 移除（失败不污染对话历史）；成功时消息留在 transcript，复用现有的持久化与 usage 记录路径。
@@ -107,7 +111,7 @@ export class MemoryDream {
 - **bash 天然被拒**：dream 复用 `runInScheduledTurn` 上下文，scheduled turn 内 bash 审批请求直接 deny（`approval.ts:63`），agent 只剩文件工具
 - **写路径白名单**：写类工具集合固定为 `{write, edit, trash}`。`runInDreamTurn` 上下文中，permission hook 对这三个工具校验其 `path` 参数 resolve（相对 cwd）后必须位于 `.memory/` 目录内，否则 deny；其余工具（read/glob/grep 等只读工具）不限，bash 已被 scheduled 上下文拒绝。防注入指令诱导 dream agent 改写项目文件
 - **并发互斥**：复用 `agentLock`，与用户对话及 cron 任务严格串行
-- **快照兜底**：任何失败/中断都恢复 dream 前状态，不留半成品
+- **快照兜底**：任何失败/中断（含用户 abort）都恢复 dream 前状态，不留半成品；abort 时 `lastAttemptAt` 已写，1h 内不会重试，dream 不会与用户反复抢锁
 
 ## 7. 测试计划
 
@@ -116,13 +120,12 @@ export class MemoryDream {
 | MemoryDream 单测 | 24h 未到不 due；到 24h 且 ≥10 条 due；<10 条不 due；失败后 1h 内不重试；状态文件读写与缺失容错 |
 | wrapper 测试 | 成功路径：agent 改写后索引已重建、markSuccess 被调；agentLoop 抛异常 → 文件逐字节恢复；产出非法 frontmatter/0 条 → 恢复 |
 | permission hook | dream 上下文写 `.memory/foo.md` 放行；写 `src/x.ts` 被拒；读任意路径放行 |
-| runtime 通道 | dream 与用户轮持锁互斥；dream 优先于 cron 队列 |
+| runtime 通道 | dream 与用户轮持锁互斥；dream 优先于 cron 队列；用户提交调 abortDream → dream 回滚并让出锁，用户轮次正常执行 |
 | 集成测试 | mock provider 脚本化执行文件编辑，跑完整 runDreamTurn，断言合并结果与 MEMORY.md 一致 |
 
 ## 8. 不做的事（YAGNI）
 
 - 不改内联 consolidate 的 20000 字符死锁本身（装箱部分合并方案留作后续，观察 dream 上线后是否仍需要）
 - 不做挂钟定时（如每天凌晨 3 点）——滚动 24h 已覆盖，且进程不一定在凌晨活着
-- 不做"用户提交时主动 abort dream"——本期用户下一轮最多等 dream 跑完；快照机制已保证将来可安全加入
-- 不做空闲延迟执行（等用户离开 N 分钟才做梦）——24h 频率下阻塞感可忽略，实测不爽再加
+- 不做空闲延迟执行（等用户离开 N 分钟才做梦）——abort 已保证用户优先；空闲延迟只是减少 dream 白跑 token 的优化，实测浪费明显再加
 - 不做跨记忆推理、摘要分层、向量索引等重型记忆架构演进
