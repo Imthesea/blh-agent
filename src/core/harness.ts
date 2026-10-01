@@ -2,9 +2,16 @@ import type { ChatMessage, ChatProvider, Config } from "./types.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { HookBus } from "./hooks.js";
 import { USER_PROMPT_SUBMIT, STOP } from "./hooks.js";
-import { agentLoop } from "./loop.js";
+import { agentLoop, TurnCancelledError } from "./loop.js";
 import type { EventBus } from "./events.js";
-import { runInScheduledTurn } from "../security/approval.js";
+import { runInScheduledTurn, runInDreamTurn } from "../security/approval.js";
+import {
+  DREAM_PROMPT,
+  applyDreamTrash,
+  restoreMemorySnapshot,
+  snapshotMemoryFiles,
+  validateDreamOutput,
+} from "../memory/dream.js";
 import type { ContextCompactor } from "../compaction/compactor.js";
 import type { TodoManager } from "../planning/todo.js";
 import type { Memory } from "../memory/system.js";
@@ -120,6 +127,46 @@ export class Harness {
     }
     jobs.cron.acknowledge(fired);
     await this.hooks.trigger(STOP, {});
+  }
+
+  /** dream 是否到期（无记忆系统时恒 false）。 */
+  async isDreamDue(): Promise<boolean> {
+    return this.memory?.dream.isDue() ?? false;
+  }
+
+  /**
+   * 跑一轮 autodream：注入 dream 提示词，在 dream 权限上下文中执行完整 agent turn。
+   * 用户 abort / 任何失败：快照回滚 + 消息回滚 + 记失败（markAttempt 已写，1h 后重试），不向上抛错。
+   */
+  async runDreamTurn(messages: ChatMessage[], signal?: AbortSignal): Promise<void> {
+    const memory = this.memory;
+    if (memory === undefined) return;
+    const dream = memory.dream;
+    dream.markAttempt();
+    const snapshot = snapshotMemoryFiles(memory.store);
+    const dreamStart = messages.length;
+    this.tracer?.event("job", { kind: "dream", status: "started" });
+    try {
+      messages.push({ role: "user", content: DREAM_PROMPT });
+      await runInDreamTurn(
+        { workdir: this.config.workdir, memoryDir: memory.store.directory },
+        () => agentLoop(this, messages, "[dream]", undefined, signal),
+      );
+      if (signal?.aborted) throw new TurnCancelledError("dream aborted");
+      applyDreamTrash(memory.store);
+      memory.store.rebuildMemoryIndex();
+      validateDreamOutput(memory.store);
+      dream.markSuccess();
+      this.tracer?.event("job", { kind: "dream", status: "completed" });
+    } catch (error) {
+      restoreMemorySnapshot(memory.store, snapshot);
+      messages.splice(dreamStart);
+      this.tracer?.event("job", {
+        kind: "dream",
+        status: error instanceof TurnCancelledError ? "aborted" : "failed",
+        error: String(error),
+      });
+    }
   }
 
   /** 跑一轮团队任务：把团队消息注入对话，执行一轮 agentLoop 处理。 */
