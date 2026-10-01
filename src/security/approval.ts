@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import path from "node:path";
 import type { PermissionRule } from "./rules.js";
 import { insertUserRule, isDestructiveBashCommand, matchRule } from "./rules.js";
 import { createLogger } from "@blh/logger";
@@ -30,6 +31,22 @@ export function runInScheduledTurn<T>(fn: () => Promise<T>): Promise<T> {
   return scheduledTurnStorage.run(true, fn);
 }
 
+/** dream 轮上下文：携带 workdir 与 memory 目录，用于写白名单判定。 */
+export interface DreamContext {
+  workdir: string;
+  memoryDir: string;
+}
+
+const dreamTurnStorage = new AsyncLocalStorage<DreamContext>();
+
+/** dream 轮可申请写白名单的工具集合。 */
+const DREAM_WRITE_TOOLS = new Set(["write_file", "edit_file"]);
+
+/** 在 dream-turn 上下文中执行：叠加 scheduled 语义（禁交互审批）+ dream 写白名单。 */
+export function runInDreamTurn<T>(ctx: DreamContext, fn: () => Promise<T>): Promise<T> {
+  return scheduledTurnStorage.run(true, () => dreamTurnStorage.run(ctx, fn));
+}
+
 export function makePermissionHook(
   rules: PermissionRule[],
   ask?: ApprovalAsker,
@@ -45,6 +62,19 @@ export function makePermissionHook(
       (typeof args.command === "string" && args.command) ||
       (typeof args.path === "string" && args.path) ||
       "";
+    const dreamCtx = dreamTurnStorage.getStore();
+    if (dreamCtx !== undefined && DREAM_WRITE_TOOLS.has(tool)) {
+      const resolved = path.resolve(dreamCtx.workdir, target);
+      const rel = path.relative(dreamCtx.memoryDir, resolved);
+      const inside = rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
+      if (!inside) {
+        log.warn("denied by dream whitelist", { tool, target });
+        tracer?.event("approval", { tool, decision: "deny", rule: "dream_whitelist", source });
+        return `denied by permission rule (${tool}: ${target}) — dream turn may only write inside .memory/`;
+      }
+      tracer?.event("approval", { tool, decision: "allow", rule: "dream_whitelist", source });
+      return null;
+    }
     if (tool === "bash" && isDestructiveBashCommand(target)) {
       log.warn("denied by rule (destructive)", { tool, target });
       tracer?.event("approval", { tool, decision: "deny", rule: "destructive_bash", source });

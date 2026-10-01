@@ -3,7 +3,7 @@ import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { Tracer } from "../../src/tracing/tracer.js";
-import { makePermissionHook, runInScheduledTurn } from "../../src/security/approval.js";
+import { makePermissionHook, runInDreamTurn, runInScheduledTurn } from "../../src/security/approval.js";
 import {
   DEFAULT_RULES,
   SKIP_PERMISSIONS_RULES,
@@ -235,5 +235,38 @@ describe("makePermissionHook（trace 事件）", () => {
       rule: "no_asker",
       source: "cli",
     });
+  });
+});
+
+describe("dream turn permission", () => {
+  const workdir = path.join(os.tmpdir(), "dream-work");
+  const memoryDir = path.join(workdir, ".memory");
+  const ctx = { workdir, memoryDir };
+
+  it("dream 轮中写 .memory/ 内文件直接放行（不触发 asker）", async () => {
+    const asker = async () => { throw new Error("asker must not be called"); };
+    const hook = makePermissionHook([], asker);
+    const result = await runInDreamTurn(ctx, () =>
+      hook("write_file", { path: ".memory/foo.md", content: "x" }));
+    expect(result).toBeNull();
+  });
+
+  it("dream 轮中写 .memory/ 外文件被拒绝", async () => {
+    const hook = makePermissionHook([], async () => "allow");
+    const result = await runInDreamTurn(ctx, () =>
+      hook("write_file", { path: "src/index.ts", content: "x" }));
+    expect(result).toMatch(/denied/);
+  });
+
+  it("dream 轮中 bash 不适用白名单，走 scheduled 语义被拒绝", async () => {
+    const hook = makePermissionHook([], async () => "allow");
+    const result = await runInDreamTurn(ctx, () => hook("bash", { command: "ls" }));
+    expect(result).toMatch(/denied: cannot request approval from a scheduled turn/);
+  });
+
+  it("非 dream 轮不受影响（原有 asker 流程）", async () => {
+    const hook = makePermissionHook([], async () => "deny");
+    const result = await hook("write_file", { path: ".memory/foo.md", content: "x" });
+    expect(result).toBe("denied by user");
   });
 });
