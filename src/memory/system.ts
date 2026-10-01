@@ -1,6 +1,7 @@
 // src/memory/system.ts
 import type { ChatMessage, ChatProvider } from "../core/types.js";
 import type { Tracer } from "../tracing/tracer.js";
+import { MemoryDream } from "./dream.js";
 import { MemoryExtractor } from "./extract.js";
 import { MemoryRecall } from "./recall.js";
 import { MemoryStore } from "./store.js";
@@ -10,6 +11,8 @@ export class Memory {
   readonly recall: MemoryRecall;
   /** 写记忆（提取）：从当前对话里提炼出值得长期保存的信息，写入存储。 */
   readonly extractor: MemoryExtractor;
+  /** 定期深度整合（autodream）的调度状态与到期判断。 */
+  readonly dream: MemoryDream;
 
   /**
    * 构造函数：创建一个记忆系统实例。
@@ -26,6 +29,7 @@ export class Memory {
   ) {
     this.recall = new MemoryRecall(store, provider, tracer);
     this.extractor = new MemoryExtractor(store, provider, tracer);
+    this.dream = new MemoryDream(store);
   }
 
   /**
