@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   listSessions,
   traceApi,
@@ -106,10 +106,17 @@ export function TracePage() {
   const [sid, setSid] = useState("");
   const [turns, setTurns] = useState<FoldedTurn[]>([]);
   const [error, setError] = useState<string | null>(null);
+  // 上次响应内容：没变化时跳过 setState，避免每秒整页重渲染
+  const lastJsonRef = useRef("");
 
   const load = useCallback(async () => {
     try {
-      setTurns(await traceApi.turns({ date, sid }));
+      const next = await traceApi.turns({ date, sid });
+      const json = JSON.stringify(next);
+      if (json !== lastJsonRef.current) {
+        lastJsonRef.current = json;
+        setTurns(next);
+      }
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

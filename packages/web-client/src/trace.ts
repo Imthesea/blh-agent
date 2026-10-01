@@ -78,6 +78,11 @@ export const traceApi = {
     return request<TraceEventsPage>(`/api/trace/events${qs({ cursor, date })}`);
   },
 
+  /** 拉取文件尾部 N 行（首次载入用，不回放全量历史）。 */
+  eventsTail(tail: number, date?: string): Promise<TraceEventsPage> {
+    return request<TraceEventsPage>(`/api/trace/events${qs({ tail, date })}`);
+  },
+
   files(): Promise<string[]> {
     return request<string[]>("/api/trace/files");
   },

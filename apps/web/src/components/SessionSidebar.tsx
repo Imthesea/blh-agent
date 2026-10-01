@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { SessionListItem } from "@blh/web-client";
 import { BlhLogo } from "./Logo";
-import { IconEllipsis, IconPanelLeft, IconPlus, IconTrash } from "./icons";
+import { IconEllipsis, IconPlus, IconTrash } from "./icons";
 
 /** 相对时间文案（简体中文短格式）。 */
 function timeLabel(mtime: number): string {
@@ -85,32 +85,19 @@ export function SessionSidebar(props: {
   sessions: SessionListItem[];
   activeId: string | null;
   loading: boolean;
-  collapsed: boolean;
-  route: string;
-  onToggle(): void;
   onNew(): void;
   onResume(file: string): void;
   onDelete(file: string): void;
 }) {
-  const { sessions, activeId, loading, collapsed, route, onToggle, onNew, onResume, onDelete } = props;
+  const { sessions, activeId, loading, onNew, onResume, onDelete } = props;
   return (
-    <aside className={`sidebar${collapsed ? " sidebar-collapsed" : ""}`}>
+    <aside className="sidebar">
       <div className="logo-row">
-        {!collapsed && (
-          <button type="button" className="brand" onClick={onNew}>
-            <span className="brand-identity">
-              <span className="brand-mark"><BlhLogo size={24} /></span>
-              <span className="brand-name">blh</span>
-            </span>
-          </button>
-        )}
-        <button
-          type="button"
-          className="icon-button"
-          aria-label={collapsed ? "展开侧边栏" : "折叠侧边栏"}
-          onClick={onToggle}
-        >
-          <IconPanelLeft size={16} />
+        <button type="button" className="brand" onClick={onNew}>
+          <span className="brand-identity">
+            <span className="brand-mark"><BlhLogo size={24} /></span>
+            <span className="brand-name">blh</span>
+          </span>
         </button>
       </div>
 
@@ -120,42 +107,20 @@ export function SessionSidebar(props: {
       </button>
 
       <div className="session-region">
-        {collapsed ? null : (
-          <ul className="session-list">
-            {sessions.map((s) => (
-              <SessionRow
-                key={s.file}
-                session={s}
-                active={s.file === activeId}
-                disabled={loading}
-                onOpen={() => onResume(s.file)}
-                onDelete={() => onDelete(s.file)}
-              />
-            ))}
-            {sessions.length === 0 && !loading && <li className="session-empty">暂无会话</li>}
-          </ul>
-        )}
+        <ul className="session-list">
+          {sessions.map((s) => (
+            <SessionRow
+              key={s.file}
+              session={s}
+              active={s.file === activeId}
+              disabled={loading}
+              onOpen={() => onResume(s.file)}
+              onDelete={() => onDelete(s.file)}
+            />
+          ))}
+          {sessions.length === 0 && !loading && <li className="session-empty">暂无会话</li>}
+        </ul>
       </div>
-
-      <nav className="observe-nav" aria-label="观测页导航">
-        {collapsed ? null : (
-          <>
-            <span className="observe-nav-title">Observe</span>
-            <a className={`observe-link${route === "" || route === "#/" ? " active" : ""}`} href="#/">
-              对话
-            </a>
-            <a className={`observe-link${route === "#/observe/overview" ? " active" : ""}`} href="#/observe/overview">
-              Overview
-            </a>
-            <a className={`observe-link${route === "#/observe/trace" ? " active" : ""}`} href="#/observe/trace">
-              Trace
-            </a>
-            <a className={`observe-link${route === "#/observe/ops" ? " active" : ""}`} href="#/observe/ops">
-              Ops
-            </a>
-          </>
-        )}
-      </nav>
     </aside>
   );
 }

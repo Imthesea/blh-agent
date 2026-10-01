@@ -55,30 +55,43 @@ function add(bucket: UsageBucket, rec: UsageRecord): void {
   bucket.costUsd += costFor(rec.model, rec.in, rec.out) ?? 0;
 }
 
-export function usageSummary(workdir: string): UsageSummary {
-  const summary: UsageSummary = {
-    total: emptyBucket(),
-    byDay: {},
-    byProvider: {},
-    byModel: {},
+export interface UsageAccumulator {
+  add(rec: UsageRecord): void;
+  /** 返回内部累积对象（只读使用，勿修改）。 */
+  summary(): UsageSummary;
+}
+
+/** 增量累加器：每条记录只累加一次，供 TraceStore 随文件增长持续投喂。 */
+export function createUsageAccumulator(): UsageAccumulator {
+  const s: UsageSummary = { total: emptyBucket(), byDay: {}, byProvider: {}, byModel: {} };
+  return {
+    add(rec) {
+      add(s.total, rec);
+      add((s.byDay[dayOf(rec.ts)] ??= emptyBucket()), rec);
+      add((s.byProvider[rec.provider] ??= emptyBucket()), rec);
+      add((s.byModel[rec.model] ??= emptyBucket()), rec);
+    },
+    summary() {
+      return s;
+    },
   };
+}
+
+export function usageSummary(workdir: string): UsageSummary {
+  const acc = createUsageAccumulator();
   let lines: string[];
   try {
     lines = fs.readFileSync(path.join(workdir, ".blh", "usage.jsonl"), "utf-8").split("\n");
   } catch {
-    return summary;
+    return acc.summary();
   }
   for (const line of lines) {
     if (line.trim() === "") continue;
     try {
-      const rec = JSON.parse(line) as UsageRecord;
-      add(summary.total, rec);
-      add((summary.byDay[dayOf(rec.ts)] ??= emptyBucket()), rec);
-      add((summary.byProvider[rec.provider] ??= emptyBucket()), rec);
-      add((summary.byModel[rec.model] ??= emptyBucket()), rec);
+      acc.add(JSON.parse(line) as UsageRecord);
     } catch {
       // 坏行跳过
     }
   }
-  return summary;
+  return acc.summary();
 }

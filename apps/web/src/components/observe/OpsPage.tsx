@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   traceApi,
   type FoldedTurn,
@@ -50,18 +50,23 @@ export function OpsPage() {
   const [overview, setOverview] = useState<TraceOverview | null>(null);
   const [turns, setTurns] = useState<FoldedTurn[]>([]);
   const [raw, setRaw] = useState<TraceEvent[]>([]);
+  const [rawTotal, setRawTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  // trace 原文的读取位置：首次从尾部开始，之后只增量拉新行
+  const cursorRef = useRef(0);
 
   const load = useCallback(async () => {
     try {
       const [ov, tns, page] = await Promise.all([
         traceApi.overview(),
         traceApi.turns({ limit: 100 }),
-        traceApi.events(0),
+        traceApi.eventsTail(200),
       ]);
       setOverview(ov);
       setTurns(tns);
-      setRaw(page.events.slice(-200));
+      setRaw(page.events);
+      setRawTotal(page.nextCursor);
+      cursorRef.current = page.nextCursor;
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -70,6 +75,22 @@ export function OpsPage() {
 
   useEffect(() => {
     void load();
+    // 2 秒增量轮询 trace 原文：没新行时只传一个数字，成本不随文件增长
+    const timer = setInterval(() => {
+      void (async () => {
+        try {
+          const page = await traceApi.events(cursorRef.current);
+          if (page.events.length > 0) {
+            setRaw((prev) => [...prev, ...page.events].slice(-200));
+          }
+          setRawTotal(page.nextCursor);
+          cursorRef.current = page.nextCursor;
+        } catch {
+          // 轮询失败静默，下一轮重试
+        }
+      })();
+    }, 2000);
+    return () => clearInterval(timer);
   }, [load]);
 
   const approvals = collectApprovals(turns);
@@ -141,7 +162,7 @@ export function OpsPage() {
           </section>
 
           <section className="observe-section">
-            <h2>trace 原文（最近 {raw.length} 行）</h2>
+            <h2>trace 原文（显示 {raw.length} / 共 {rawTotal} 行）</h2>
             {raw.length === 0 ? (
               <p className="observe-empty">暂无事件</p>
             ) : (

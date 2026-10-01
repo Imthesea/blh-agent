@@ -217,6 +217,7 @@ pnpm dev -- --provider deepseek --model deepseek-chat
 - `docs/2026-09-15-blh-claude-code-ts-design.md` — 总体设计文档
 - `docs/2026-09-18-code-review.md` — 代码评审记录
 - `docs/debugging-methodology.md` — 调试方法论沉淀
+- `docs/boundary-checklist.md` — 边界问题清单:加任何功能前必过的"防无限膨胀"检查项
 - `docs/plans/` — 按里程碑拆分的实施计划
 
 ## Web 工作台

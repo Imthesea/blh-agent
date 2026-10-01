@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
-import * as path from "node:path";
-import { foldEvents, readTraceFile, type FoldedTurn } from "./fold.js";
-import { usageSummary, type UsageSummary } from "./pricing.js";
+import type { FoldedTurn } from "./fold.js";
+import type { UsageSummary } from "./pricing.js";
+import { TraceStore } from "./store.js";
 import { Tracer, localDate } from "./tracer.js";
 import type { TraceEvent } from "./types.js";
 
@@ -34,20 +34,18 @@ function listDates(workdir: string): string[] {
     .reverse();
 }
 
-function readDay(workdir: string, date: string): TraceEvent[] {
-  return readTraceFile(path.join(Tracer.tracesDir(workdir), `${date}.jsonl`));
-}
-
 export function createTraceModule(workdir: string): TraceModule {
+  // 所有读取走 Store：增量读文件、缓存解析与折叠结果，
+  // 重复调用成本稳定，不随 trace 文件增长而膨胀。
+  const store = new TraceStore(workdir);
   return {
     overview(): TraceOverview {
-      const events = readDay(workdir, localDate());
-      const finished = foldEvents(events).filter((t) => t.finished);
+      const finished = store.turns(localDate()).filter((t) => t.finished);
       const tools = finished.reduce((n, t) => n + t.toolsUsed, 0);
       const latencies = finished.map((t) => t.latencyMs ?? 0);
       const avgLatencyMs = latencies.length > 0 ? Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length) : 0;
       return {
-        usage: usageSummary(workdir),
+        usage: store.usage(),
         today: { turns: finished.length, tools, avgLatencyMs },
         recentTurns: finished.slice(-5).reverse(),
       };
@@ -55,7 +53,7 @@ export function createTraceModule(workdir: string): TraceModule {
 
     turns(opts?: { date?: string; sid?: string; limit?: number }): FoldedTurn[] {
       const date = opts?.date ?? localDate();
-      let turns = foldEvents(readDay(workdir, date));
+      let turns = store.turns(date);
       if (opts?.sid !== undefined && opts.sid !== "") {
         turns = turns.filter((t) => t.sid === opts.sid);
       }
@@ -63,27 +61,7 @@ export function createTraceModule(workdir: string): TraceModule {
     },
 
     events(cursor: number, date?: string): { events: TraceEvent[]; nextCursor: number } {
-      const file = path.join(Tracer.tracesDir(workdir), `${date ?? localDate()}.jsonl`);
-      let content: string;
-      try {
-        content = fs.readFileSync(file, "utf-8");
-      } catch {
-        return { events: [], nextCursor: 0 };
-      }
-      const lines = content.split("\n").filter((l) => l.trim() !== "");
-      const total = lines.length;
-      if (cursor >= total) {
-        return { events: [], nextCursor: total };
-      }
-      const events: TraceEvent[] = [];
-      for (const line of lines.slice(Math.max(0, cursor))) {
-        try {
-          events.push(JSON.parse(line) as TraceEvent);
-        } catch {
-          // 坏行跳过
-        }
-      }
-      return { events, nextCursor: total };
+      return store.events(date ?? localDate(), cursor);
     },
 
     files(): string[] {

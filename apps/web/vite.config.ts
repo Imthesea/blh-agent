@@ -20,7 +20,7 @@ export default defineConfig({
     open: true,
     proxy: {
       "/api": {
-        target: "http://127.0.0.1:8123",
+        target: process.env.BLH_API_TARGET ?? "http://127.0.0.1:8123",
         changeOrigin: true,
       },
     },

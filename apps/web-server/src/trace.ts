@@ -41,6 +41,18 @@ export function handleTraceApi(res: ServerResponse, ctx: WebContext, method: str
       return;
     }
     case "/api/trace/events": {
+      // tail=N：返回文件尾部 N 行（新连接从尾部开始，不回放全量历史）
+      const tailRaw = url.searchParams.get("tail");
+      if (tailRaw !== null) {
+        const tail = Number(tailRaw);
+        if (!Number.isInteger(tail) || tail <= 0) {
+          sendJson(res, 400, { error: "invalid tail" });
+          return;
+        }
+        const total = trace.events(Number.MAX_SAFE_INTEGER, date).nextCursor;
+        sendJson(res, 200, trace.events(Math.max(0, total - tail), date));
+        return;
+      }
       const cursor = Number(url.searchParams.get("cursor") ?? "0");
       if (!Number.isInteger(cursor) || cursor < 0) {
         sendJson(res, 400, { error: "invalid cursor" });

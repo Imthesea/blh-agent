@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 
 test.beforeEach(async ({ request }) => {
-  await request.post("http://127.0.0.1:8123/api/__reset");
+  await request.post("http://127.0.0.1:18123/api/__reset");
 });
 
 test("工作台加载并显示品牌标识", async ({ page }) => {
@@ -52,6 +52,22 @@ test("折叠侧边栏", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "折叠侧边栏" }).click();
   await expect(page.getByRole("button", { name: "展开侧边栏" })).toBeVisible();
+});
+
+test("拖拽调整会话列表宽度并持久化", async ({ page }) => {
+  await page.goto("/");
+  const sidebar = page.locator(".sidebar");
+  await expect(sidebar).toHaveCSS("width", "280px");
+  const resizer = page.locator(".sidebar-resizer");
+  const box = await resizer.boundingBox();
+  if (box === null) throw new Error("resizer 不可见");
+  await page.mouse.move(box.x + box.width / 2, box.y + 300);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 80, box.y + 300, { steps: 5 });
+  await page.mouse.up();
+  await expect(sidebar).toHaveCSS("width", "360px");
+  await page.reload();
+  await expect(page.locator(".sidebar")).toHaveCSS("width", "360px");
 });
 
 test("悬停会话显示三点并可删除", async ({ page }) => {

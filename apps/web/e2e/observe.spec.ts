@@ -1,14 +1,23 @@
 import { test, expect } from "@playwright/test";
 
 test.beforeEach(async ({ request }) => {
-  await request.post("http://127.0.0.1:8123/api/__reset");
+  await request.post("http://127.0.0.1:18123/api/__reset");
 });
 
-test("侧边栏显示 Observe 导航区", async ({ page }) => {
+test("图标栏显示主导航", async ({ page }) => {
   await page.goto("/");
+  await expect(page.getByRole("link", { name: "对话" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Overview" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Trace" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Ops" })).toBeVisible();
+});
+
+test("图标栏根据路由高亮当前页", async ({ page }) => {
+  await page.goto("/#/observe/trace");
+  await expect(page.getByRole("link", { name: "Trace" })).toHaveClass(/active/);
+  await expect(page.getByRole("link", { name: "对话" })).not.toHaveClass(/active/);
+  await page.goto("/");
+  await expect(page.getByRole("link", { name: "对话" })).toHaveClass(/active/);
 });
 
 test("点击 Trace 链接切换 hash 并显示 Trace 页", async ({ page }) => {

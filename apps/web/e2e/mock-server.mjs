@@ -218,4 +218,4 @@ const server = http.createServer(async (req, res) => {
   res.end(JSON.stringify({ error: "not found" }));
 });
 
-server.listen(8123, "127.0.0.1");
+server.listen(Number(process.env.MOCK_PORT ?? 8123), "127.0.0.1");
