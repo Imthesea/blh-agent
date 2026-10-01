@@ -67,6 +67,11 @@ export class SessionManager {
     return this.current !== undefined && this.current.id === id ? this.current : undefined;
   }
 
+  /** 当前活跃会话（无则 undefined）；dream 通道经此与用户共享同一会话的消息历史。 */
+  get currentHandle(): SessionHandle | undefined {
+    return this.current;
+  }
+
   list(): SessionHandle[] {
     return this.current !== undefined ? [this.current] : [];
   }
@@ -84,6 +89,8 @@ export class SessionManager {
       return this.runner.runTurn(handle.messages, text, events, controller.signal);
     };
     log.debug("run turn", { id, textLength: text.length });
+    // 用户提交优先：中断进行中的 dream（其内部回滚后释放锁）。
+    this.runner.jobs?.abortDream();
     return this.lock.withLock(run).finally(() => {
       off();
       if (this.currentAbort === controller) this.currentAbort = null;

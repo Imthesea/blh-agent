@@ -60,7 +60,17 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
     approvals,
     options.sessionStore,
   );
-  session.create(workdir);
+  if (harness.jobs !== undefined) {
+    harness.jobs.setDreamTurn(
+      () => harness.isDreamDue!(),
+      async (signal) => {
+        const handle = session.currentHandle;
+        if (handle === undefined) return;
+        await harness.runDreamTurn!(handle.messages, signal);
+      },
+    );
+    harness.jobs.start(); // web 场景此前从未 start，dream 与 cron 一并激活
+  }
 
   const server = createWebServer({
     session,
@@ -85,6 +95,7 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
     port,
     close: () =>
       new Promise<void>((resolve, reject) => {
+        harness.jobs?.stop();
         server.close((error) => {
           if (error) reject(error);
           else {

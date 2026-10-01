@@ -71,11 +71,23 @@ export interface TurnLock {
   withLock<T>(fn: () => Promise<T>): Promise<T>;
 }
 
+/** 后台任务运行时（根 JobsRuntime 满足）：dream/cron 调度与轮次锁。 */
+export interface WebJobs {
+  agentLock: TurnLock;
+  start(): void;
+  stop(): void;
+  abortDream(): void;
+  setDreamTurn(due: () => Promise<boolean>, turn: (signal: AbortSignal) => Promise<void>): void;
+}
+
 /** SessionManager 依赖的最小会话运行接口（根 Harness 满足）。 */
 export interface WebTurnRunner {
   newSession(): ChatMessage[];
   runTurn(messages: ChatMessage[], text: string, events?: WebEventBus, signal?: AbortSignal): Promise<void>;
   sessionStore?: SessionStoreLike | undefined;
+  jobs?: WebJobs | undefined;
+  isDreamDue?(): Promise<boolean>;
+  runDreamTurn?(messages: ChatMessage[], signal?: AbortSignal): Promise<void>;
 }
 
 export interface BuildHarnessDeps {
@@ -88,14 +100,12 @@ export interface BuildHarnessDeps {
 }
 
 /** 由宿主（根 CLI）注入的 harness 工厂，避免 web-server 反向依赖根包。 */
-export type BuildHarness = (deps: BuildHarnessDeps) => WebTurnRunner & {
-  jobs?: { agentLock: TurnLock } | undefined;
-};
+export type BuildHarness = (deps: BuildHarnessDeps) => WebTurnRunner;
 
 /** Trace 读取模块的最小接口（根包 src/tracing/module.ts 的 createTraceModule 满足）。 */
 export interface TraceModule {
   overview(): unknown;
   turns(opts?: { date?: string; sid?: string; limit?: number }): unknown;
-  events(cursor: number, date?: string): unknown;
+  events(cursor: number, date?: string): { events: unknown[]; nextCursor: number };
   files(): unknown;
 }
