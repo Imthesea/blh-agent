@@ -162,3 +162,63 @@ describe("AgentLock", () => {
     expect(lock.tryAcquire()).toBe(true);
   });
 });
+
+describe("JobsRuntime dream channel", () => {
+  it("dream 到期时执行 dreamTurn（isDue 评估 60s 降频）", async () => {
+    vi.useFakeTimers();
+    const runtime = makeRuntime();
+    let due = true;
+    let ran = 0;
+    runtime.setDreamTurn(async () => { const r = due; due = false; return r; }, async () => { ran += 1; });
+    runtime.start();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(ran).toBe(1);
+    runtime.stop();
+    vi.useRealTimers();
+  });
+
+  it("dream 未到期不执行；60s 内 isDue 只评估一次", async () => {
+    vi.useFakeTimers();
+    const runtime = makeRuntime();
+    let dueCalls = 0;
+    runtime.setDreamTurn(async () => { dueCalls += 1; return false; }, async () => { throw new Error("must not run"); });
+    runtime.start();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(dueCalls).toBe(1);
+    runtime.stop();
+    vi.useRealTimers();
+  });
+
+  it("abortDream 中断进行中的 dreamTurn", async () => {
+    vi.useFakeTimers();
+    const runtime = makeRuntime();
+    let aborted = false;
+    runtime.setDreamTurn(async () => true, (signal) => new Promise<void>((resolve) => {
+      signal.addEventListener("abort", () => { aborted = true; resolve(); });
+    }));
+    runtime.start();
+    await vi.advanceTimersByTimeAsync(1_000);
+    runtime.abortDream();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(aborted).toBe(true);
+    runtime.stop();
+    vi.useRealTimers();
+  });
+
+  it("dream 优先于 cron：同一窗口先跑 dream", async () => {
+    vi.useFakeTimers();
+    const runtime = makeRuntime();
+    const order: string[] = [];
+    runtime.cron.schedule("* * * * *", "tick");
+    runtime.cron.pollDue(new Date(2026, 8, 14, 10, 30));
+    runtime.setCronTurn(async () => { order.push("cron"); });
+    let due = true;
+    runtime.setDreamTurn(async () => { const r = due; due = false; return r; }, async () => { order.push("dream"); });
+    runtime.start();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(order[0]).toBe("dream");
+    expect(order).toContain("cron");
+    runtime.stop();
+    vi.useRealTimers();
+  });
+});

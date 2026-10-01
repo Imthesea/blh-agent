@@ -5,6 +5,9 @@ import { createLogger } from "@blh/logger";
 
 const log = createLogger("jobs.runtime");
 
+/** dream due 检查降频：processQueue 每 200ms 轮询，isDue 每 60s 才真正评估一次。 */
+const DREAM_CHECK_MS = 60_000;
+
 /** 异步互斥锁：tryAcquire 同步抢锁；acquire 排队等待；release 把所有权移交下一个等待者 */
 export class AgentLock {
   private held = false;
@@ -51,6 +54,10 @@ export class AgentLock {
 export class JobsRuntime {
   readonly agentLock = new AgentLock();
   private cronTurn: (() => Promise<void>) | null = null;
+  private dreamDue: (() => Promise<boolean>) | null = null;
+  private dreamTurn: ((signal: AbortSignal) => Promise<void>) | null = null;
+  private dreamAbort: AbortController | null = null;
+  private lastDreamCheck = 0;
   private schedulerTimer: NodeJS.Timeout | undefined;
   private queueTimer: NodeJS.Timeout | undefined;
   private queueFailures = 0;
@@ -63,6 +70,16 @@ export class JobsRuntime {
 
   setCronTurn(callback: () => Promise<void>): void {
     this.cronTurn = callback;
+  }
+
+  setDreamTurn(due: () => Promise<boolean>, turn: (signal: AbortSignal) => Promise<void>): void {
+    this.dreamDue = due;
+    this.dreamTurn = turn;
+  }
+
+  /** 用户优先：中断正在进行的 dream（dream 内部回滚并释放锁）。 */
+  abortDream(): void {
+    this.dreamAbort?.abort();
   }
 
   injectBackgroundResults(messages: ChatMessage[]): number {
@@ -134,6 +151,27 @@ export class JobsRuntime {
   }
 
   private async processQueue(): Promise<void> {
+    // dream 通道：due 检查降频；到期则抢锁执行（抢不到说明用户轮/团队轮在跑，等下一轮）。
+    if (this.dreamTurn !== null && this.dreamDue !== null && Date.now() - this.lastDreamCheck >= DREAM_CHECK_MS) {
+      this.lastDreamCheck = Date.now();
+      let due = false;
+      try {
+        due = await this.dreamDue();
+      } catch (error) {
+        log.warn("dream due check failed", { error: String(error) });
+      }
+      if (due) {
+        if (!this.agentLock.tryAcquire()) return;
+        this.dreamAbort = new AbortController();
+        try {
+          await this.dreamTurn(this.dreamAbort.signal);
+        } finally {
+          this.dreamAbort = null;
+          this.agentLock.release();
+        }
+        return;
+      }
+    }
     if (!this.cron.hasQueue() || !this.agentLock.tryAcquire()) return;
     try {
       if (this.cron.hasQueue() && this.cronTurn !== null) {
