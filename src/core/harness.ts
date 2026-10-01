@@ -8,6 +8,7 @@ import { runInScheduledTurn, runInDreamTurn } from "../security/approval.js";
 import {
   DREAM_PROMPT,
   applyDreamTrash,
+  clearDreamTrash,
   restoreMemorySnapshot,
   snapshotMemoryFiles,
   validateDreamOutput,
@@ -160,6 +161,7 @@ export class Harness {
       this.tracer?.event("job", { kind: "dream", status: "completed" });
     } catch (error) {
       restoreMemorySnapshot(memory.store, snapshot);
+      clearDreamTrash(memory.store);
       messages.splice(dreamStart);
       this.tracer?.event("job", {
         kind: "dream",

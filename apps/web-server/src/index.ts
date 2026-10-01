@@ -62,6 +62,7 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
   );
   if (harness.jobs !== undefined) {
     harness.jobs.setDreamTurn(
+      // buildHarness 实际返回 Harness 实例，isDreamDue/runDreamTurn 是其固有方法（非可选），此处断言安全。
       () => harness.isDreamDue!(),
       async (signal) => {
         const handle = session.currentHandle;

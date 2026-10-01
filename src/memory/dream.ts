@@ -2,7 +2,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { createLogger } from "@blh/logger";
-import { INDEX_NAME, type MemoryStore } from "./store.js";
+import { INDEX_NAME, MEMORY_TYPES, type MemoryStore } from "./store.js";
 
 const log = createLogger("memory.dream");
 
@@ -128,11 +128,22 @@ export function applyDreamTrash(store: MemoryStore): void {
   log.info("dream trash applied", { removed });
 }
 
-/** 校验 dream 产出：每个记忆文件正文必须非空。不合法即抛错（调用方据此回滚）。 */
+/** 清掉 dream 留下的 trash 清单（abort/失败回滚路径用，不回滚真实删除——那时还没执行删除）。 */
+export function clearDreamTrash(store: MemoryStore): void {
+  rmSync(path.join(store.directory, DREAM_TRASH_NAME), { force: true });
+}
+
+/** 校验 dream 产出：每个记忆文件必须有合法 frontmatter（name/description/type）且正文非空。不合法即抛错（调用方据此回滚）。 */
 export function validateDreamOutput(store: MemoryStore): void {
   for (const record of store.listMemoryFiles()) {
     if (record.body.trim() === "") {
       throw new Error(`dream produced empty memory file: ${record.filename}`);
+    }
+    if (record.description.trim() === "") {
+      throw new Error(`dream produced memory file without description: ${record.filename}`);
+    }
+    if (!(MEMORY_TYPES as readonly string[]).includes(record.type)) {
+      throw new Error(`dream produced memory file with invalid type "${record.type}": ${record.filename}`);
     }
   }
 }
