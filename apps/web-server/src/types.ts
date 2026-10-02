@@ -76,7 +76,7 @@ export interface WebJobs {
   agentLock: TurnLock;
   start(): void;
   stop(): void;
-  abortDream(): void;
+  abortBackground(): void;
   setDreamTurn(due: () => Promise<boolean>, turn: (signal: AbortSignal) => Promise<void>): void;
 }
 

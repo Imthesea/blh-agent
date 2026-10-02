@@ -758,6 +758,22 @@ describe("runScheduledTurn", () => {
     ).toBe(false);
     expect(jobs.cron.hasQueue()).toBe(true);
   });
+
+  it("rolls back injected messages and restores the queue when aborted", async () => {
+    const jobs = makeJobs();
+    const job = jobs.cron.schedule("* * * * *", "run tests");
+    jobs.cron.pollDue(new Date(2026, 8, 14, 10, 30));
+    const harness = makeHarness([makeTextMessage("done")], { jobs });
+    const messages = harness.newSession();
+    const controller = new AbortController();
+    controller.abort();
+    await harness.runScheduledTurn(messages, controller.signal);
+    expect(
+      messages.some((m) => (m.content ?? "").includes("[Scheduled]")),
+    ).toBe(false);
+    expect(jobs.cron.hasQueue()).toBe(true);
+    expect(job.pending_delivery).toBe(true);
+  });
 });
 
 class StreamingProvider implements ChatProvider {

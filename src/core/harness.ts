@@ -109,8 +109,8 @@ export class Harness {
     }
   }
 
-  /** 跑一轮定时任务：取出到期的定时任务注入对话，执行一轮 agentLoop；出错就回滚。 */
-  async runScheduledTurn(messages: ChatMessage[]): Promise<void> {
+  /** 跑一轮定时任务：取出到期的定时任务注入对话，执行一轮 agentLoop；出错或被打断就回滚并重新排队。 */
+  async runScheduledTurn(messages: ChatMessage[], signal?: AbortSignal): Promise<void> {
     const jobs = this.jobs;
     if (jobs === undefined) return;
     const scheduledStart = messages.length;
@@ -120,11 +120,20 @@ export class Harness {
       this.tracer?.event("job", { kind: "cron", name: job.id, status: "fired" });
     }
     try {
-      await runInScheduledTurn(() => agentLoop(this, messages, "[scheduled]"));
+      await runInScheduledTurn(() => agentLoop(this, messages, "[scheduled]", undefined, signal));
     } catch (error) {
       messages.splice(scheduledStart);
       jobs.cron.restore(fired);
       throw error;
+    }
+    if (signal?.aborted) {
+      // 用户优先：cron 回合被打断，回滚注入的消息并重新排队（不 acknowledge、不抛错）。
+      for (const job of fired) {
+        this.tracer?.event("job", { kind: "cron", name: job.id, status: "aborted" });
+      }
+      messages.splice(scheduledStart);
+      jobs.cron.restore(fired);
+      return;
     }
     jobs.cron.acknowledge(fired);
     await this.hooks.trigger(STOP, {});

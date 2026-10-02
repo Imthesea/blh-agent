@@ -2,7 +2,7 @@ import * as path from "node:path";
 import { createLogger } from "@blh/logger";
 import type { ChatMessage, ChatProvider, Config } from "../core/types.js";
 import type { HookBus } from "../core/hooks.js";
-import type { AgentLock } from "../jobs/runtime.js";
+import type { AgentLock } from "../core/agent-lock.js";
 import type { Task, TaskStore } from "../planning/tasks.js";
 import { isValidAgentName, MessageBus } from "./bus.js";
 import type { BusMessage } from "./bus.js";

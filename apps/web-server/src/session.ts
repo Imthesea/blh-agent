@@ -89,8 +89,8 @@ export class SessionManager {
       return this.runner.runTurn(handle.messages, text, events, controller.signal);
     };
     log.debug("run turn", { id, textLength: text.length });
-    // 用户提交优先：中断进行中的 dream（其内部回滚后释放锁）。
-    this.runner.jobs?.abortDream();
+    // 用户提交优先：中断进行中的后台回合（dream/cron，其内部回滚后释放锁）。
+    this.runner.jobs?.abortBackground();
     return this.lock.withLock(run).finally(() => {
       off();
       if (this.currentAbort === controller) this.currentAbort = null;

@@ -17,7 +17,7 @@ export interface TurnRunner {
   /** 跑一轮用户对话。 */
   runTurn(messages: ChatMessage[], text: string, events?: EventBus): Promise<void>;
   /** 可选：跑一轮定时任务。 */
-  runScheduledTurn?(messages: ChatMessage[]): Promise<void>;
+  runScheduledTurn?(messages: ChatMessage[], signal?: AbortSignal): Promise<void>;
   /** 可选：跑一轮团队任务。 */
   runTeamTurn?(messages: ChatMessage[]): Promise<void>;
   /** 可选：后台任务运行时。 */
@@ -171,9 +171,9 @@ export async function repl(
   try {
     // 接上定时任务：注册一个回调，定时器触发时跑一轮定时任务，再把本轮新增的回复打印出来。
     if (jobs !== undefined && runScheduledTurn !== undefined) {
-      jobs.setCronTurn(async () => {
+      jobs.setCronTurn(async (signal) => {
         const before = messages.length;
-        await runScheduledTurn(messages);
+        await runScheduledTurn(messages, signal);
         const reply = lastAssistantText(messages, before);
         if (reply) io.print(reply);
       });
@@ -258,8 +258,8 @@ export async function repl(
         };
         // 有后台任务运行时，用锁串行执行本轮，避免和定时/团队任务并发冲突。
         if (jobs !== undefined) {
-          // 用户提交优先：中断进行中的 dream（其内部回滚后释放锁），再排队拿锁。
-          jobs.abortDream();
+          // 用户提交优先：中断进行中的后台回合（dream/cron，其内部回滚后释放锁），再排队拿锁。
+          jobs.abortBackground();
           await jobs.agentLock.withLock(run);
         } else {
           await run();

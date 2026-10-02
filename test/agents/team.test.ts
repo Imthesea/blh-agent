@@ -6,7 +6,7 @@ import { MessageBus } from "../../src/agents/bus.js";
 import { TeamRuntime } from "../../src/agents/team.js";
 import { HookBus } from "../../src/core/hooks.js";
 import type { Config } from "../../src/core/types.js";
-import { AgentLock } from "../../src/jobs/runtime.js";
+import { AgentLock } from "../../src/core/agent-lock.js";
 import { TaskStore } from "../../src/planning/tasks.js";
 import { MockProvider } from "../integration/helpers.js";
 

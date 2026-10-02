@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChatMessage } from "../../src/core/types.js";
 import { BackgroundManager } from "../../src/jobs/background.js";
 import { CronScheduler } from "../../src/jobs/cron.js";
-import { AgentLock, JobsRuntime } from "../../src/jobs/runtime.js";
+import { AgentLock } from "../../src/core/agent-lock.js";
+import { JobsRuntime } from "../../src/jobs/runtime.js";
 
 let tmpDir: string;
 
@@ -123,6 +124,27 @@ describe("JobsRuntime", () => {
       vi.useRealTimers();
     }
   });
+
+  it("abortBackground 中断进行中的 cronTurn", async () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = makeRuntime();
+      let aborted = false;
+      runtime.cron.schedule("* * * * *", "tick");
+      runtime.cron.pollDue(new Date(2026, 8, 14, 10, 30));
+      runtime.setCronTurn((signal) => new Promise<void>((resolve) => {
+        signal.addEventListener("abort", () => { aborted = true; resolve(); });
+      }));
+      runtime.start();
+      await vi.advanceTimersByTimeAsync(1_000);
+      runtime.abortBackground();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(aborted).toBe(true);
+      runtime.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("AgentLock", () => {
@@ -189,7 +211,7 @@ describe("JobsRuntime dream channel", () => {
     vi.useRealTimers();
   });
 
-  it("abortDream 中断进行中的 dreamTurn", async () => {
+  it("abortBackground 中断进行中的 dreamTurn", async () => {
     vi.useFakeTimers();
     const runtime = makeRuntime();
     let aborted = false;
@@ -198,7 +220,7 @@ describe("JobsRuntime dream channel", () => {
     }));
     runtime.start();
     await vi.advanceTimersByTimeAsync(1_000);
-    runtime.abortDream();
+    runtime.abortBackground();
     await vi.advanceTimersByTimeAsync(0);
     expect(aborted).toBe(true);
     runtime.stop();
