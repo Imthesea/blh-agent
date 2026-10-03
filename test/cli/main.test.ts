@@ -246,6 +246,12 @@ describe("parseCliArgs", () => {
     expect(parsed.continue).toBe(true);
     expect(parsed.continueFile).toBe("session_123.jsonl");
   });
+  it("rejects --continue values that contain path separators", async () => {
+    const { parseCliArgs } = await import("../../src/cli/main.js");
+    expect(() => parseCliArgs(["--continue", "../session.jsonl"])).toThrow("invalid session file");
+    expect(() => parseCliArgs(["--continue", "..\\session.jsonl"])).toThrow("invalid session file");
+    expect(() => parseCliArgs(["--continue", ".."])).toThrow("invalid session file");
+  });
 
   it("no --continue leaves continue flags unset", async () => {
     const { parseCliArgs } = await import("../../src/cli/main.js");

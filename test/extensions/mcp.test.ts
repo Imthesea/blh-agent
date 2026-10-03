@@ -468,6 +468,45 @@ describe("MCPRegistry", () => {
       "already connected",
     );
   });
+  it("connect rejects an empty stdio command", async () => {
+    const registry = new ToolRegistry();
+    const mcp = new MCPRegistry(registry, ".");
+    await expect(mcp.connect("fake", "   ")).resolves.toContain("server command is required");
+    expect(registry.list()).toEqual([]);
+  });
+  it("closeAll unregisters tools and clears prompt state", async () => {
+    const registry = new ToolRegistry();
+    const mcp = new MCPRegistry(registry, ".");
+    await mcp.connect("fake", process.execPath, ["-e", SERVER_CODE]);
+    expect(registry.list().map((tool) => tool.name)).toContain("mcp__fake__search");
+    expect(mcp.systemPromptSection()).toContain("fake");
+    await mcp.closeAll();
+    expect(registry.list().map((tool) => tool.name)).toEqual([]);
+    expect(mcp.systemPromptSection()).toBe("");
+  });
+
+  it("closeAll attempts every client when one close fails", async () => {
+    const mcp = new MCPRegistry(new ToolRegistry(), ".");
+    const clients = (mcp as unknown as {
+      clients: Map<string, { close(): Promise<void> }>;
+    }).clients;
+    let failingClosed = false;
+    let workingClosed = false;
+    clients.set("failing", {
+      close: async () => {
+        failingClosed = true;
+        throw new Error("boom");
+      },
+    });
+    clients.set("working", {
+      close: async () => {
+        workingClosed = true;
+      },
+    });
+    await expect(mcp.closeAll()).rejects.toThrow("boom");
+    expect(failingClosed).toBe(true);
+    expect(workingClosed).toBe(true);
+  });
 
   it("connect_http_registers_prefixed_tools", async () => {
     const server = await startHttpServer(modernHttpHandler());

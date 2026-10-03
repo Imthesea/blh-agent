@@ -71,7 +71,13 @@ export class SimpleJsonSchema {
       return typeof value === "boolean" ? [true, null] : [false, "expected boolean"];
     }
     if (t === "number" || t === "integer") {
-      return typeof value === "number" ? [true, null] : [false, "expected number"];
+      if (typeof value !== "number" || !Number.isFinite(value)) {
+        return [false, "expected number"];
+      }
+      if (t === "integer" && !Number.isInteger(value)) {
+        return [false, "expected integer"];
+      }
+      return [true, null];
     }
     return [true, null];
   }

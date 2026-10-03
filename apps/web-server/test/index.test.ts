@@ -36,7 +36,7 @@ function makeRunner(): WebTurnRunner {
     jobs: {
       agentLock: { withLock: async <T,>(fn: () => Promise<T>) => fn() },
       start: () => {},
-      stop: () => {},
+      stop: async () => {},
       abortBackground: () => {},
       setDreamTurn: () => {},
     },
@@ -63,5 +63,55 @@ describe("startWebServer", () => {
     } finally {
       await running.close();
     }
+  });
+  it("close awaits the runner dispose hook", async () => {
+    const port = await freePort();
+    let disposed = false;
+    const runner = makeRunner();
+    runner.dispose = async () => {
+      disposed = true;
+    };
+    const running = await startWebServer({
+      workdir: tmpDir,
+      port,
+      staticDir: null,
+      sessionStore: makeTestSessionStore(),
+      buildHarness: () => runner,
+    });
+    await running.close();
+    expect(disposed).toBe(true);
+  });
+  it("close stops jobs when no dispose hook exists", async () => {
+    const port = await freePort();
+    let stopped = false;
+    const runner = makeRunner();
+    runner.jobs!.stop = async () => {
+      stopped = true;
+    };
+    const running = await startWebServer({
+      workdir: tmpDir,
+      port,
+      staticDir: null,
+      sessionStore: makeTestSessionStore(),
+      buildHarness: () => runner,
+    });
+    await running.close();
+    expect(stopped).toBe(true);
+  });
+  it("close still closes the server when dispose fails", async () => {
+    const port = await freePort();
+    const runner = makeRunner();
+    runner.dispose = async () => {
+      throw new Error("dispose failed");
+    };
+    const running = await startWebServer({
+      workdir: tmpDir,
+      port,
+      staticDir: null,
+      sessionStore: makeTestSessionStore(),
+      buildHarness: () => runner,
+    });
+    await expect(running.close()).rejects.toThrow("dispose failed");
+    await expect(fetch(running.url)).rejects.toThrow();
   });
 });

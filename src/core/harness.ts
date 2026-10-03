@@ -85,6 +85,14 @@ export class Harness {
     return null;
   }
 
+  /** 释放长生命周期资源：后台任务、团队定时器和 MCP 连接。 */
+  async dispose(): Promise<void> {
+    this.jobs?.abortBackground();
+    await this.jobs?.stop();
+    this.agents?.stop?.();
+    await this.extensions?.mcp.closeAll();
+  }
+
   /** 拼完整的系统提示词：如果有记忆，就把记忆部分追加到基础提示词后面。 */
   private async fullSystemPrompt(messages: ChatMessage[]): Promise<string> {
     const section = this.memory ? await this.memory.systemSection(messages) : "";
@@ -94,6 +102,7 @@ export class Harness {
   /** 跑一轮用户对话：把用户输入加进对话，处理记忆，然后交给 agentLoop 执行并收尾。 */
   async runTurn(messages: ChatMessage[], text: string, events?: EventBus, signal?: AbortSignal): Promise<void> {
     this.tracer?.setSid(this.sessionStore ? path.basename(this.sessionStore.path) : "cli");
+    this.goal?.beginQuery();
     await this.hooks.trigger(USER_PROMPT_SUBMIT, { text });
     const userMessage: ChatMessage = { role: "user", content: text };
     messages.push(userMessage);

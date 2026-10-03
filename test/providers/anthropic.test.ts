@@ -182,4 +182,35 @@ describe("lastUsage", () => {
     await provider.chatCompletion?.([{ role: "user", content: "hi" }]);
     expect(provider.lastUsage()).toEqual({ promptTokens: 4, completionTokens: 3 });
   });
+  it("chatWithUsage 并发时返回各自响应的 usage", async () => {
+    const { AnthropicProvider } = await import("../../src/providers/anthropic.js");
+    const firstResponse = {
+      content: [{ type: "text", text: "first" }],
+      stop_reason: "end_turn",
+      usage: { input_tokens: 10, output_tokens: 2 },
+    };
+    const secondResponse = {
+      content: [{ type: "text", text: "second" }],
+      stop_reason: "end_turn",
+      usage: { input_tokens: 20, output_tokens: 4 },
+    };
+    const create = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            setTimeout(() => resolve(firstResponse), 20);
+          }),
+      )
+      .mockImplementationOnce(async () => secondResponse);
+    const provider = new AnthropicProvider(config, makeClient(create));
+
+    const first = provider.chatWithUsage?.([{ role: "user", content: "first" }], []);
+    const second = await provider.chatWithUsage?.([{ role: "user", content: "second" }], []);
+    expect(second?.usage).toEqual({ promptTokens: 20, completionTokens: 4 });
+    expect(await first).toMatchObject({
+      message: { role: "assistant", content: "first" },
+      usage: { promptTokens: 10, completionTokens: 2 },
+    });
+  });
 });

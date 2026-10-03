@@ -75,15 +75,21 @@ describe("JobsRuntime", () => {
     expect(messages).toHaveLength(1);
   });
 
-  it("start/stop idempotent", () => {
+  it("start/stop idempotent", async () => {
     const runtime = makeRuntime();
     runtime.start();
     runtime.start(); // 幂等
     expect(runtime.started).toBe(true);
-    runtime.stop();
-    runtime.stop(); // 幂等
+    await runtime.stop();
+    await runtime.stop(); // 幂等
     expect(runtime.started).toBe(false);
   });
+  it("stop cancels background commands even when the scheduler was never started", async () => {
+    const runtime = makeRuntime();
+    const taskId = runtime.background.start("node --eval setInterval(()=>{},60000)");
+    await runtime.stop();
+    expect(runtime.background.tasks[taskId]?.status).toBe("cancelled");
+  }, 15000);
 
   it("start schedules pollDue and stop clears the scheduler", () => {
     vi.useFakeTimers();

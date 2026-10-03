@@ -4,8 +4,10 @@ import { ToolRegistry } from "../../src/tools/registry.js";
 
 class FakeSubagent {
   calls: string[] = [];
-  async run(prompt: string): Promise<string> {
+  signals: Array<AbortSignal | undefined> = [];
+  async run(prompt: string, signal?: AbortSignal): Promise<string> {
     this.calls.push(prompt);
+    this.signals.push(signal);
     return "sub-result";
   }
 }
@@ -69,6 +71,14 @@ describe("registerAgentTools", () => {
     registerAgentTools(registry, sub, new FakeTeam());
     expect(await registry.dispatch("task", { prompt: "explore" })).toBe("sub-result");
     expect(sub.calls).toEqual(["explore"]);
+  });
+  it("task passes the dispatch AbortSignal", async () => {
+    const sub = new FakeSubagent();
+    const registry = new ToolRegistry();
+    registerAgentTools(registry, sub, new FakeTeam());
+    const controller = new AbortController();
+    await registry.dispatch("task", { prompt: "explore" }, controller.signal);
+    expect(sub.signals).toEqual([controller.signal]);
   });
 
   it("spawn_teammate dispatches", async () => {

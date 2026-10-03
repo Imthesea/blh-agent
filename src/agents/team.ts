@@ -316,7 +316,9 @@ export class TeamRuntime implements TeammateTeam {
     if (gate !== undefined && gate !== "not_required") {
       this.planGates.set(owner, "required");
     }
+    const requestId = this.planRequestIds.get(owner);
     this.planRequestIds.delete(owner);
+    if (requestId !== undefined) this.pendingRequests.delete(requestId);
   }
 
   /**
@@ -368,6 +370,7 @@ export class TeamRuntime implements TeammateTeam {
     this.planGates.delete(owner);
     this.planRequestIds.delete(owner);
     this.activeTeammates.delete(owner);
+    this.removeRequestsFor(owner);
   }
 
   // ---- 协议（teammate 侧） ----
@@ -473,6 +476,7 @@ export class TeamRuntime implements TeammateTeam {
       this.activeTeammates.get(name) !== "stopping";
     if (!valid) return [false, "[Ignored shutdown request: request mismatch]"];
     this.activeTeammates.set(name, "stopping");
+    this.pendingRequests.delete(requestId);
     return [true, requestId];
   }
 
@@ -510,6 +514,7 @@ export class TeamRuntime implements TeammateTeam {
     this.planGates.set(name, state.status);
     this.activeTeammates.set(name, "working");
     this.planRequestIds.delete(name);
+    this.pendingRequests.delete(requestId);
     const outcome = state.status;
     return [true, `[Plan ${outcome}] ${msg.content}`];
   }
@@ -527,6 +532,12 @@ export class TeamRuntime implements TeammateTeam {
         .toString()
         .padStart(6, "0")}`;
       if (!this.pendingRequests.has(requestId)) return requestId;
+    }
+  }
+
+  private removeRequestsFor(agent: string): void {
+    for (const [requestId, state] of this.pendingRequests) {
+      if (state.sender === agent || state.target === agent) this.pendingRequests.delete(requestId);
     }
   }
 
@@ -747,6 +758,7 @@ export class TeamRuntime implements TeammateTeam {
     if (fromAgent !== state.target || toAgent !== state.sender) return;
     if (state.status !== "pending") return;
     state.status = approve ? "approved" : "rejected";
+    this.pendingRequests.delete(requestId);
   }
 
   /**

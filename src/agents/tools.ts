@@ -2,7 +2,7 @@ import type { ToolRegistry } from "../tools/registry.js";
 
 /** task 工具的后端：一次性 subagent。 */
 export interface SubagentLike {
-  run(prompt: string): Promise<string>;
+  run(prompt: string, signal?: AbortSignal): Promise<string>;
 }
 
 /** Lead 团队工具所需的最小 TeamRuntime 接口。 */
@@ -30,7 +30,7 @@ export function registerAgentTools(
       properties: { prompt: { type: "string" } },
       required: ["prompt"],
     },
-    handler: async (args) => subagent.run(String(args["prompt"] ?? "")),
+    handler: async (args, signal) => subagent.run(String(args["prompt"] ?? ""), signal),
   });
   registry.register({
     name: "spawn_teammate",

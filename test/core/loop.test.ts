@@ -9,7 +9,7 @@ import { ToolRegistry } from "../../src/tools/registry.js";
 import { HookBus, PRE_TOOL_USE } from "../../src/core/hooks.js";
 import { ContextCompactor } from "../../src/compaction/compactor.js";
 import { MockProvider, makeToolCallMessage, makeTextMessage } from "../integration/helpers.js";
-import type { ChatMessage, ChatProvider, Config, ProviderStreamEvent, ToolDefinition } from "../../src/core/types.js";
+import type { ChatMessage, ChatProvider, ChatUsage, Config, ProviderStreamEvent, ToolDefinition } from "../../src/core/types.js";
 import { EventBus } from "../../src/core/events.js";
 import type { AgentEvent } from "../../src/core/events.js";
 import { TodoManager } from "../../src/planning/todo.js";
@@ -231,6 +231,33 @@ describe("agentLoop goal stop hook", () => {
     expect(
       messages.some((m) => (m.content ?? "").includes("[Goal still active]")),
     ).toBe(false);
+  });
+  it("新的用户回合重置 Stop hook 连续 block 计数", async () => {
+    const goal = new GoalController(
+      {
+        evaluate: async () => ({
+          ok: false,
+          reason: "not yet",
+          impossible: false,
+        }),
+      },
+      1,
+    );
+    goal.setGoal("finish");
+    const provider = new MockProvider([
+      makeTextMessage("try1"),
+      makeTextMessage("try2"),
+      makeTextMessage("try3"),
+      makeTextMessage("try4"),
+    ]);
+    const harness = makeHarness([], { provider, goal });
+    const messages = harness.newSession();
+    await harness.runTurn(messages, "first");
+    await harness.runTurn(messages, "second");
+    const reminders = messages.filter(
+      (message) => message.role === "user" && (message.content ?? "").includes("[Goal still active]"),
+    );
+    expect(reminders).toHaveLength(2);
   });
 });
 
@@ -829,6 +856,19 @@ class FailingStreamProvider implements ChatProvider {
   }
 }
 
+class PartialFailingStreamProvider implements ChatProvider {
+  constructor(private readonly completeText: string) {}
+
+  async chat(): Promise<ChatMessage> {
+    return makeTextMessage(this.completeText);
+  }
+
+  async *stream(): AsyncIterable<ProviderStreamEvent> {
+    yield { type: "text_delta", text: this.completeText.slice(0, 3) };
+    throw new Error("stream exploded");
+  }
+}
+
 describe("agentLoop streaming events", () => {
   it("emits turn/tool/text events in order via EventBus", async () => {
     const provider = new StreamingProvider([
@@ -939,6 +979,22 @@ describe("agentLoop streaming events", () => {
       "turn_end",
     ]);
     expect(lastAssistantText(messages)).toBe("done");
+  });
+  it("流式失败前已有输出时，回退后补发未展示的后缀", async () => {
+    const provider = new PartialFailingStreamProvider("Hello world");
+    const harness = makeHarness([], { provider });
+    const events: AgentEvent[] = [];
+    const bus = new EventBus();
+    bus.subscribe((event) => events.push(event));
+    const messages = harness.newSession();
+    await harness.runTurn(messages, "go", bus);
+
+    const deltas = events.filter((event) => event.type === "assistant_text_delta");
+    expect(deltas).toEqual([
+      { type: "assistant_text_delta", text: "Hel" },
+      { type: "assistant_text_delta", text: "lo world" },
+    ]);
+    expect(lastAssistantText(messages)).toBe("Hello world");
   });
 });
 
@@ -1076,5 +1132,29 @@ describe("agentLoop tracing", () => {
     const end = trace[trace.length - 1]!;
     expect(end["type"]).toBe("turn_end");
     expect(end["iterations"]).toBe(1);
+  });
+  it("优先使用 chatWithUsage，而不是共享 lastUsage", async () => {
+    class UsageProvider implements ChatProvider {
+      async chat(): Promise<ChatMessage> {
+        throw new Error("chat should not be used");
+      }
+
+      async chatWithUsage(): Promise<{ message: ChatMessage; usage: ChatUsage | null }> {
+        return {
+          message: makeTextMessage("done"),
+          usage: { promptTokens: 11, completionTokens: 7 },
+        };
+      }
+
+      lastUsage(): ChatUsage | undefined {
+        return { promptTokens: 999, completionTokens: 999 };
+      }
+    }
+
+    const { tracer, dir } = makeTracer();
+    const harness = makeHarness([], { provider: new UsageProvider(), tracer });
+    await harness.runTurn(harness.newSession(), "go");
+    const llm = readTrace(dir).find((event) => event["type"] === "llm");
+    expect(llm?.["usage"]).toEqual({ promptTokens: 11, completionTokens: 7 });
   });
 });

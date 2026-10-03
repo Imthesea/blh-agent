@@ -5,6 +5,7 @@ import {
   type ServerResponse,
 } from "node:http";
 import { createReadStream, existsSync, readdirSync, statSync } from "node:fs";
+import { createInterface } from "node:readline";
 import * as path from "node:path";
 import type { ApprovalDecision } from "./types.js";
 import type { SessionManager } from "./session.js";
@@ -116,10 +117,10 @@ function readBody(req: IncomingMessage): Promise<unknown> {
   });
 }
 
-function listSessions(
+async function listSessions(
   workdir: string,
   sessionStore: SessionStoreModule,
-): Array<{ file: string; mtime: number; preview: string }> {
+): Promise<Array<{ file: string; mtime: number; preview: string }>> {
   const dir = sessionStore.sessionsDir(workdir);
   let names: string[];
   try {
@@ -132,13 +133,13 @@ function listSessions(
     if (!name.endsWith(".jsonl")) continue;
     const file = path.join(dir, name);
     try {
-      if (!statSync(file).isFile()) continue;
-      const messages = sessionStore.load(file);
-      const firstUser = messages.find((m) => m.role === "user");
+      const stats = statSync(file);
+      if (!stats.isFile()) continue;
+      const firstUser = await readFirstUser(file);
       result.push({
         file: name,
-        mtime: statSync(file).mtimeMs,
-        preview: (firstUser?.content ?? "").slice(0, 80),
+        mtime: stats.mtimeMs,
+        preview: firstUser?.slice(0, 80) ?? "",
       });
     } catch {
       // 跳过无法读取的文件
@@ -146,6 +147,28 @@ function listSessions(
   }
   result.sort((a, b) => b.mtime - a.mtime);
   return result;
+}
+
+async function readFirstUser(file: string): Promise<string | null> {
+  const stream = createReadStream(file, { encoding: "utf8" });
+  const lines = createInterface({ input: stream, crlfDelay: Infinity });
+  try {
+    for await (const line of lines) {
+      if (line.trim() === "") continue;
+      try {
+        const message = JSON.parse(line) as { role?: unknown; content?: unknown };
+        if (message.role === "user") {
+          return typeof message.content === "string" ? message.content : "";
+        }
+      } catch {
+        // 单行损坏不影响会话列表
+      }
+    }
+    return null;
+  } finally {
+    lines.close();
+    stream.destroy();
+  }
 }
 
 function serveStatic(res: ServerResponse, root: string, pathname: string): void {
@@ -200,7 +223,7 @@ async function handleApi(
   }
 
   if (method === "GET" && pathname === "/api/sessions") {
-    json(res, 200, { sessions: listSessions(ctx.workdir, ctx.sessionStore) });
+    json(res, 200, { sessions: await listSessions(ctx.workdir, ctx.sessionStore) });
     return;
   }
 

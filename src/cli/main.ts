@@ -45,11 +45,16 @@ function parseContinue(argv: string[]): { continue?: boolean; continueFile?: str
     if (argv[i] !== "--continue") continue;
     const next = argv[i + 1];
     if (next !== undefined && !next.startsWith("-")) {
+      if (!isSessionFileName(next)) throw new Error(`invalid session file: ${next}`);
       return { continue: true, continueFile: next };
     }
     return { continue: true };
   }
   return {};
+}
+
+function isSessionFileName(file: string): boolean {
+  return file !== "" && file !== "." && file !== ".." && !/[\\/]/.test(file);
 }
 
 /** 解析命令行参数，拼成结构化结果：一次性 prompt、工作目录、模型等配置，以及是否跳过权限。 */

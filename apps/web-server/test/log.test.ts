@@ -2,7 +2,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { Server } from "node:http";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { initLogger, resetLogger } from "@blh/logger";
 import { createWebServer, type WebContext } from "../src/http.js";
 import { SSEBroadcaster } from "../src/bridge.js";
@@ -63,8 +63,10 @@ describe("POST /api/log", () => {
     const logsDir = path.join(tmpDir, ".blh", "logs");
     const files = readdirSync(logsDir);
     expect(files.length).toBeGreaterThan(0);
-    const content = readFileSync(path.join(logsDir, files[0]!), "utf8");
-    expect(content).toContain("web.app");
+    await vi.waitFor(() => {
+      const content = readFileSync(path.join(logsDir, files[0]!), "utf8");
+      expect(content).toContain("web.app");
+    });
   });
 
   it("缺少 CSRF 头返回 403", async () => {

@@ -114,16 +114,21 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
   return {
     url,
     port,
-    close: () =>
-      new Promise<void>((resolve, reject) => {
-        harness.jobs?.stop();
-        server.close((error) => {
-          if (error) reject(error);
-          else {
-            log.info("web server closed");
-            resolve();
-          }
+    close: async () => {
+      try {
+        if (harness.dispose !== undefined) await harness.dispose();
+        else await harness.jobs?.stop();
+      } finally {
+        await new Promise<void>((resolve, reject) => {
+          server.close((error) => {
+            if (error) reject(error);
+            else {
+              log.info("web server closed");
+              resolve();
+            }
+          });
         });
-      }),
+      }
+    },
   };
 }

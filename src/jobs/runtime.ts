@@ -118,15 +118,16 @@ export class JobsRuntime {
     this.scheduleQueuePoll();
   }
 
-  /** 停止所有定时器，重置状态。 */
-  stop(): void {
-    if (!this.started) return;
+  /** 停止定时器，中断后台回合，并等待后台命令结束。 */
+  async stop(): Promise<void> {
+    this.abortBackground();
     this.started = false;
     if (this.schedulerTimer !== undefined) clearInterval(this.schedulerTimer);
     if (this.queueTimer !== undefined) clearTimeout(this.queueTimer);
     this.schedulerTimer = undefined;
     this.queueTimer = undefined;
     this.queueFailures = 0;
+    await this.background.stopAll();
   }
 
   /**

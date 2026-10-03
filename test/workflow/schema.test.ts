@@ -33,6 +33,14 @@ describe("workflow schema", () => {
     expect(schema.validate([1, 2])).toEqual([true, null]);
     expect(schema.validate([1, "x"])).toEqual([false, "[1]: expected number"]);
   });
+  it("schema rejects non-finite numbers and non-integers", () => {
+    const numberSchema = new SimpleJsonSchema({ type: "number" });
+    const integerSchema = new SimpleJsonSchema({ type: "integer" });
+    expect(numberSchema.validate(Number.NaN)).toEqual([false, "expected number"]);
+    expect(numberSchema.validate(Number.POSITIVE_INFINITY)).toEqual([false, "expected number"]);
+    expect(integerSchema.validate(1.5)).toEqual([false, "expected integer"]);
+    expect(integerSchema.validate(2)).toEqual([true, null]);
+  });
 
   it("parse runner json fenced", () => {
     expect(parseRunnerJson('```json\n{"a": 1}\n```')).toEqual({ a: 1 });

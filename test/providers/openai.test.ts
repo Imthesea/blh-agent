@@ -217,4 +217,33 @@ describe("lastUsage", () => {
     await provider.chat([{ role: "user", content: "hi" }], []);
     expect(provider.lastUsage()).toBeUndefined();
   });
+  it("chatWithUsage 并发时返回各自响应的 usage", async () => {
+    const { OpenAICompatProvider } = await import("../../src/providers/openai-compat.js");
+    const firstResponse = {
+      choices: [{ message: { role: "assistant", content: "first" } }],
+      usage: { prompt_tokens: 10, completion_tokens: 2 },
+    };
+    const secondResponse = {
+      choices: [{ message: { role: "assistant", content: "second" } }],
+      usage: { prompt_tokens: 20, completion_tokens: 4 },
+    };
+    const create = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            setTimeout(() => resolve(firstResponse), 20);
+          }),
+      )
+      .mockImplementationOnce(async () => secondResponse);
+    const provider = new OpenAICompatProvider(config, makeClient(create));
+
+    const first = provider.chatWithUsage?.([{ role: "user", content: "first" }], []);
+    const second = await provider.chatWithUsage?.([{ role: "user", content: "second" }], []);
+    expect(second?.usage).toEqual({ promptTokens: 20, completionTokens: 4 });
+    expect(await first).toMatchObject({
+      message: { role: "assistant", content: "first" },
+      usage: { promptTokens: 10, completionTokens: 2 },
+    });
+  });
 });

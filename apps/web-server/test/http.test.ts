@@ -120,12 +120,34 @@ describe("http 路由", () => {
   });
 
   it("GET /api/sessions 返回列表", async () => {
-    const { server, url } = await listen(makeContext(tmpDir));
+    const context = await makeContext(tmpDir);
+    context.sessionStore.load = () => {
+      throw new Error("session list must not load the full transcript");
+    };
+    const sessionsDir = path.join(tmpDir, ".sessions");
+    mkdirSync(sessionsDir, { recursive: true });
+    writeFileSync(
+      path.join(sessionsDir, "session_preview.jsonl"),
+      [
+        JSON.stringify({ role: "system", content: "system" }),
+        JSON.stringify({ role: "user", content: "first user prompt" }),
+      ].join("\n") + "\n",
+      "utf8",
+    );
+    const { server, url } = await listen(context);
     servers.push(server);
     const res = await fetch(`${url}/api/sessions`);
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { sessions: unknown[] };
-    expect(Array.isArray(body.sessions)).toBe(true);
+    const body = (await res.json()) as {
+      sessions: Array<{ file: string; preview: string }>;
+    };
+    expect(
+      body.sessions.find((session) => session.file === "session_preview.jsonl"),
+    ).toEqual({
+      file: "session_preview.jsonl",
+      mtime: expect.any(Number),
+      preview: "first user prompt",
+    });
   });
 
   it("GET /api/events 返回 SSE 头", async () => {

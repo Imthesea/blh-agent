@@ -95,8 +95,12 @@ export class OpenAICompatProvider implements ChatProvider {
     );
   }
 
-  async chat(messages: ChatMessage[], tools: ToolDefinition[], maxTokens?: number, signal?: AbortSignal): Promise<ChatMessage> {
-    log.debug("chat request", { model: this.config.model, messages: messages.length, tools: tools.length });
+  private async requestChat(
+    messages: ChatMessage[],
+    tools: ToolDefinition[],
+    maxTokens?: number,
+    signal?: AbortSignal,
+  ): Promise<{ message: ChatMessage; usage: ChatUsage | null }> {
     const response = await this.createCompletion({
       model: this.config.model,
       messages: messages.map(toOpenAIMessage),
@@ -117,10 +121,29 @@ export class OpenAICompatProvider implements ChatProvider {
     const message = response.choices[0]?.message;
     if (!message) throw new Error("provider returned no choices");
     log.debug("chat response", { toolCalls: message.tool_calls?.length ?? 0 });
-    if (response.usage) {
-      this.last = { promptTokens: response.usage.prompt_tokens, completionTokens: response.usage.completion_tokens };
-    }
-    return fromOpenAIMessage(message);
+    const usage = response.usage
+      ? {
+          promptTokens: response.usage.prompt_tokens,
+          completionTokens: response.usage.completion_tokens,
+        }
+      : null;
+    if (usage !== null) this.last = usage;
+    return { message: fromOpenAIMessage(message), usage };
+  }
+
+  async chat(messages: ChatMessage[], tools: ToolDefinition[], maxTokens?: number, signal?: AbortSignal): Promise<ChatMessage> {
+    log.debug("chat request", { model: this.config.model, messages: messages.length, tools: tools.length });
+    return (await this.requestChat(messages, tools, maxTokens, signal)).message;
+  }
+
+  async chatWithUsage(
+    messages: ChatMessage[],
+    tools: ToolDefinition[],
+    maxTokens?: number,
+    signal?: AbortSignal,
+  ): Promise<{ message: ChatMessage; usage: ChatUsage | null }> {
+    log.debug("chat request", { model: this.config.model, messages: messages.length, tools: tools.length });
+    return this.requestChat(messages, tools, maxTokens, signal);
   }
 
   /** 无 tools 单轮,额外返回 usage(供 workflow runner 记账)。 */

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "node:fs/promises";
+import { getEventListeners } from "node:events";
 import os from "node:os";
 import path from "node:path";
 
@@ -46,6 +47,23 @@ describe("runBash", () => {
     const out = await runScript("setTimeout(() => {}, 30000)", 1);
     expect(out).toBe("error: command timed out after 1s");
   }, 15000);
+  it("rejects invalid timeout values before spawning", async () => {
+    const { runBash } = await import("../../src/tools/bash.js");
+    expect(() => runBash(dir, 120, 30000, { command: "echo hi", timeout: 0 })).toThrow(TypeError);
+    expect(() => runBash(dir, 120, 30000, { command: "echo hi", timeout: 1.5 })).toThrow(TypeError);
+    expect(() => runBash(dir, 120, 30000, { command: "echo hi", timeout: Number.NaN })).toThrow(
+      TypeError,
+    );
+    expect(() => runBash(dir, Number.POSITIVE_INFINITY, 30000, { command: "echo hi" })).toThrow(
+      TypeError,
+    );
+  });
+  it("removes the abort listener after a command completes", async () => {
+    const { runBash } = await import("../../src/tools/bash.js");
+    const controller = new AbortController();
+    await runBash(dir, 120, 30000, { command: "echo hi" }, controller.signal);
+    expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
+  });
   it.skipIf(process.platform === "win32")("kills the whole process group on timeout", async () => {
     const pidFile = path.join(dir, "pid.txt");
     const command = `node -e "require('fs').writeFileSync('${pidFile}', String(process.pid)); setInterval(()=>{},1000)"`;

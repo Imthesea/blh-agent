@@ -128,8 +128,12 @@ export class AnthropicProvider implements ChatProvider {
     return signal !== undefined ? { signal } : undefined;
   }
 
-  async chat(messages: ChatMessage[], tools: ToolDefinition[], maxTokens?: number, signal?: AbortSignal): Promise<ChatMessage> {
-    log.debug("chat request", { model: this.config.model, messages: messages.length, tools: tools.length });
+  private async requestChat(
+    messages: ChatMessage[],
+    tools: ToolDefinition[],
+    maxTokens?: number,
+    signal?: AbortSignal,
+  ): Promise<{ message: ChatMessage; usage: ChatUsage | null }> {
     const { system, messages: anthropicMessages } = toAnthropicMessages(messages);
     const response = await withRetry(() =>
       this.client.messages.create(
@@ -144,10 +148,26 @@ export class AnthropicProvider implements ChatProvider {
       ),
     );
     log.debug("chat response", { toolCalls: response.content.filter((b) => b.type === "tool_use").length });
-    if (response.usage) {
-      this.last = { promptTokens: response.usage.input_tokens, completionTokens: response.usage.output_tokens };
-    }
-    return fromAnthropicMessage(response);
+    const usage = response.usage
+      ? { promptTokens: response.usage.input_tokens, completionTokens: response.usage.output_tokens }
+      : null;
+    if (usage !== null) this.last = usage;
+    return { message: fromAnthropicMessage(response), usage };
+  }
+
+  async chat(messages: ChatMessage[], tools: ToolDefinition[], maxTokens?: number, signal?: AbortSignal): Promise<ChatMessage> {
+    log.debug("chat request", { model: this.config.model, messages: messages.length, tools: tools.length });
+    return (await this.requestChat(messages, tools, maxTokens, signal)).message;
+  }
+
+  async chatWithUsage(
+    messages: ChatMessage[],
+    tools: ToolDefinition[],
+    maxTokens?: number,
+    signal?: AbortSignal,
+  ): Promise<{ message: ChatMessage; usage: ChatUsage | null }> {
+    log.debug("chat request", { model: this.config.model, messages: messages.length, tools: tools.length });
+    return this.requestChat(messages, tools, maxTokens, signal);
   }
 
   async chatCompletion(

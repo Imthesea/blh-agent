@@ -75,7 +75,7 @@ export interface TurnLock {
 export interface WebJobs {
   agentLock: TurnLock;
   start(): void;
-  stop(): void;
+  stop(): Promise<void>;
   abortBackground(): void;
   setDreamTurn(due: () => Promise<boolean>, turn: (signal: AbortSignal) => Promise<void>): void;
 }
@@ -86,6 +86,8 @@ export interface WebTurnRunner {
   runTurn(messages: ChatMessage[], text: string, events?: WebEventBus, signal?: AbortSignal): Promise<void>;
   sessionStore?: SessionStoreLike | undefined;
   jobs?: WebJobs | undefined;
+  /** 释放长生命周期资源；完整 Harness 会实现。 */
+  dispose?(): Promise<void>;
   isDreamDue?(): Promise<boolean>;
   runDreamTurn?(messages: ChatMessage[], signal?: AbortSignal): Promise<void>;
 }

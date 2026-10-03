@@ -247,6 +247,7 @@ export class MCPRegistry {
 
   // 连接一个「本地 stdio」类型的 MCP 服务器：启动它、发现工具、注册进全局工具表。
   async connect(name: string, command: string, args?: string[]): Promise<string> {
+    if (!command.trim()) return "Error: server command is required";
     const client = new MCPClient(name, new StdioTransport(command, args ?? [], name));
     return this.connectClient(name, client);
   }
@@ -323,6 +324,27 @@ export class MCPRegistry {
     for (const name of registered) {
       this.registry.unregister(name);
       this.origins.delete(name);
+    }
+  }
+
+  // 关闭全部 MCP 连接，并移除它们注册到全局工具表里的工具。
+  async closeAll(): Promise<void> {
+    const clients = [...this.clients.values()];
+    const tools = [...this.origins.keys()];
+    this.clients.clear();
+    this.origins.clear();
+    for (const name of tools) this.registry.unregister(name);
+    const results = await Promise.allSettled(clients.map((client) => client.close()));
+    const errors = results
+      .map((result) => (result.status === "rejected" ? result.reason : undefined))
+      .filter((error): error is unknown => error !== undefined);
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) {
+      throw new Error(
+        `failed to close ${errors.length} MCP clients: ${errors
+          .map((error) => (error instanceof Error ? error.message : String(error)))
+          .join("; ")}`,
+      );
     }
   }
 

@@ -272,6 +272,6 @@ export async function repl(
   } finally {
     // 退出前清理：停掉团队运行时和后台任务。
     agents?.stop?.();
-    if (jobs !== undefined) jobs.stop();
+    await jobs?.stop();
   }
 }

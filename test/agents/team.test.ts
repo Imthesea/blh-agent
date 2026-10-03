@@ -85,6 +85,15 @@ describe("TeamRuntime", () => {
     expect([...team.pendingRequests.values()].some((state) => state.type === "shutdown")).toBe(true);
     expect(team.bus.readInbox("bob")[0]?.type).toBe("shutdown_request");
   });
+  it("accepted shutdown requests are removed from pending state", () => {
+    const team = makeTeam();
+    team.activeTeammates.set("bob", "working");
+    team.requestShutdown("bob");
+    const message = team.bus.readInbox("bob")[0]!;
+    const requestId = String(message.metadata["request_id"]);
+    expect(team.applyShutdownRequest("bob", message)).toEqual([true, requestId]);
+    expect(team.pendingRequests.has(requestId)).toBe(false);
+  });
 
   it("review_plan_protocol", () => {
     const team = makeTeam();
@@ -94,6 +103,22 @@ describe("TeamRuntime", () => {
     const requestId = [...team.pendingRequests.keys()][0] as string;
     expect(team.reviewPlan(requestId, true)).toContain("Plan approved");
     expect(team.pendingRequests.get(requestId)?.status).toBe("approved");
+  });
+  it("applied plan responses and teammate cleanup remove pending requests", () => {
+    const team = makeTeam();
+    team.activeTeammates.set("bob", "working");
+    team.planGates.set("bob", "required");
+    team.submitPlan("bob", "do auth first");
+    const requestId = [...team.pendingRequests.keys()][0]!;
+    team.reviewPlan(requestId, true);
+    const response = team.bus.readInbox("bob")[0]!;
+    expect(team.applyPlanResponse("bob", response)[0]).toBe(true);
+    expect(team.pendingRequests.has(requestId)).toBe(false);
+
+    team.requestShutdown("bob");
+    const shutdownId = [...team.pendingRequests.keys()][0]!;
+    team.finishTeammate("bob");
+    expect(team.pendingRequests.has(shutdownId)).toBe(false);
   });
 
   it("leadTick catches teamTurn errors and releases lock", async () => {

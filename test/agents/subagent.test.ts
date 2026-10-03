@@ -38,6 +38,34 @@ describe("SubagentRunner", () => {
     await expect(runner.run("write a note")).resolves.toBe("wrote");
     expect(readFileSync(path.join(tmpDir, "note.txt"), "utf8")).toBe("hello");
   });
+  it("passes the parent AbortSignal to tool handlers", async () => {
+    const runner = new SubagentRunner(
+      new MockProvider([makeToolCallMessage("record", {}), makeTextMessage("done")]),
+      config,
+      new HookBus(),
+    );
+    let toolSignal: AbortSignal | undefined;
+    runner.tools.register({
+      name: "record",
+      description: "",
+      parameters: { type: "object" },
+      handler: async (_args, signal) => {
+        toolSignal = signal;
+        return "recorded";
+      },
+    });
+    const controller = new AbortController();
+    await expect(runner.run("record the signal", controller.signal)).resolves.toBe("done");
+    expect(toolSignal).toBe(controller.signal);
+  });
+  it("returns without calling the model when already aborted", async () => {
+    const provider = new MockProvider([makeTextMessage("should not run")]);
+    const runner = new SubagentRunner(provider, config, new HookBus());
+    const controller = new AbortController();
+    controller.abort();
+    await expect(runner.run("do it", controller.signal)).resolves.toBe("Subagent cancelled.");
+    expect(provider.calls).toBe(0);
+  });
 
   it("blocks a tool via the PreToolUse hook", async () => {
     const hooks = new HookBus();

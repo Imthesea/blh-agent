@@ -19,6 +19,17 @@ export class TurnCancelledError extends Error {
   }
 }
 
+class StreamFailedError extends Error {
+  constructor(readonly partialText: string, cause?: unknown) {
+    super(
+      `provider stream failed: ${
+        cause instanceof Error ? cause.message : cause === undefined ? "unknown error" : String(cause)
+      }`,
+    );
+    this.name = "StreamFailedError";
+  }
+}
+
 export { parseToolArguments };
 
 /** 提示词过长时，允许「被动压缩后重试」的最大次数 */
@@ -118,6 +129,7 @@ export async function agentLoop(
           usedStream = true;
         } catch (error) {
           if (error instanceof TurnCancelledError) throw error;
+          const partialText = error instanceof StreamFailedError ? error.partialText : "";
           // 流式偶尔会失败，这里退回到非流式方式再试一次，保证对话不中断。
           log.warn("stream failed, falling back to non-streaming", {
             error: error instanceof Error ? error.message : String(error),
@@ -131,13 +143,16 @@ export async function agentLoop(
             retries: reactiveRetries,
             usage: null,
           });
-          message = await harness.provider.chat(messages, harness.tools.list(), undefined, signal);
-          usage = harness.provider.lastUsage?.() ?? null;
+          const response = await requestAssistantMessage(harness.provider, messages, harness.tools.list(), signal);
+          message = response.message;
+          usage = response.usage;
+          await emitRecoveredStreamText(events, partialText, message);
         }
       } else {
         // 不支持流式就直接用普通方式调用模型。
-        message = await harness.provider.chat(messages, harness.tools.list(), undefined, signal);
-        usage = harness.provider.lastUsage?.() ?? null;
+        const response = await requestAssistantMessage(harness.provider, messages, harness.tools.list(), signal);
+        message = response.message;
+        usage = response.usage;
       }
       harness.tracer?.event("llm", {
         provider: harness.config.provider ?? "deepseek",
@@ -349,7 +364,48 @@ async function streamAssistantMessage(
     }
   } catch (error) {
     if (signal?.aborted) throw new TurnCancelledError(partialText);
-    throw error;
+    throw new StreamFailedError(partialText, error);
   }
-  throw new Error("provider stream ended without a done event");
+    throw new StreamFailedError(
+      partialText,
+      new Error("provider stream ended without a done event"),
+    );
+}
+
+async function requestAssistantMessage(
+  provider: ChatProvider,
+  messages: ChatMessage[],
+  tools: ToolDefinition[],
+  signal?: AbortSignal,
+): Promise<{ message: ChatMessage; usage: ChatUsage | null }> {
+  if (provider.chatWithUsage !== undefined) {
+    return provider.chatWithUsage(messages, tools, undefined, signal);
+  }
+  const message = await provider.chat(messages, tools, undefined, signal);
+  return { message, usage: provider.lastUsage?.() ?? null };
+}
+
+async function emitRecoveredStreamText(
+  events: EventBus,
+  partialText: string,
+  message: ChatMessage,
+): Promise<void> {
+  if (partialText === "") return;
+  const completeText = message.content ?? "";
+  if (completeText.startsWith(partialText)) {
+    const suffix = completeText.slice(partialText.length);
+    if (suffix !== "") await events.emit({ type: "assistant_text_delta", text: suffix });
+    return;
+  }
+  if (completeText !== "") {
+    await events.emit({
+      type: "assistant_text_delta",
+      text: `\n\n[stream recovered; full response]\n${completeText}`,
+    });
+    return;
+  }
+  await events.emit({
+    type: "assistant_text_delta",
+    text: "\n\n[stream recovered; previous partial text may be incomplete]",
+  });
 }
