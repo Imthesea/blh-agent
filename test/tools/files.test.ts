@@ -92,11 +92,17 @@ describe("symlink escape", () => {
     const outside = await fs.mkdtemp(path.join(os.tmpdir(), "blh-outside-"));
     try {
       await fs.writeFile(path.join(outside, "secret.txt"), "secret");
+      await fs.writeFile(path.join(outside, "target.txt"), "safe");
       await fs.symlink(outside, path.join(dir, "link"), "dir");
+      await fs.symlink(path.join(outside, "target.txt"), path.join(dir, "inside.txt"), "file");
       await expect(readFile(dir, { path: "link/secret.txt" })).rejects.toThrow(PathEscapeError);
       await expect(writeFile(dir, { path: "link/new.txt", content: "x" })).rejects.toThrow(
         PathEscapeError,
       );
+      await expect(writeFile(dir, { path: "inside.txt", content: "escaped" })).rejects.toThrow(
+        PathEscapeError,
+      );
+      await expect(fs.readFile(path.join(outside, "target.txt"), "utf8")).resolves.toBe("safe");
     } finally {
       await fs.rm(outside, { recursive: true, force: true });
     }

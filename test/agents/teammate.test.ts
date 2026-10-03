@@ -136,4 +136,18 @@ describe("TeammateRuntime", () => {
     expect(await runtime.work()).toBe("continue");
     expect(existsSync(path.join(tmpDir, "x.txt"))).toBe(false);
   });
+
+  it("plan gate keeps teammate working when model replies without a plan", async () => {
+    const team = new FakeTeam();
+    team.gate = "required";
+    const runtime = makeTeammate(team, [makeTextMessage("I will do it.")]);
+
+    expect(await runtime.work()).toBe("continue");
+    expect(team.sent.some((entry) => entry[3] === "result")).toBe(false);
+    expect(team.sent.some((entry) => entry[3] === "idle_notification")).toBe(false);
+    expect(runtime.messages.at(-1)).toMatchObject({
+      role: "user",
+      content: expect.stringContaining("[Plan required]"),
+    });
+  });
 });

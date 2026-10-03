@@ -74,6 +74,11 @@ describe("isDestructiveBashCommand", () => {
       "rm -rf /home",
       "rm -rf /etc /var",
       "rm -fr /",
+      "rm -r /",
+      "rm -rf .",
+      "rm -rf ./",
+      "rm -rf ./*",
+      "rm -rf $HOME",
     ]) {
       expect(isDestructiveBashCommand(cmd), cmd).toBe(true);
     }
@@ -101,6 +106,30 @@ describe("isDestructiveBashCommand", () => {
     }
   });
 
+  it("识别 Windows 递归删除变体", () => {
+    for (const cmd of [
+      "rd /s /q C:\\",
+      "rm -rf \"C:\\Program Files\"",
+      "rmdir /s C:\\",
+      "rd /s /q .",
+      "del /s /q C:\\*",
+      "powershell -Command \"Remove-Item -Recurse -Force C:\\\"",
+      "powershell.exe -NoProfile -Command Remove-Item C:\\ -Recurse -Force",
+      "Remove-Item \"C:\\Program Files\" -Recurse -Force",
+      "pwsh -c rd /s /q %USERPROFILE%",
+      "format C:",
+    ]) {
+      expect(isDestructiveBashCommand(cmd), cmd).toBe(true);
+    }
+  });
+
+  it("识别命令串中的破坏性片段", () => {
+    expect(isDestructiveBashCommand("echo ok && rm -rf /")).toBe(true);
+    expect(isDestructiveBashCommand("echo ok; rd /s /q C:\\")).toBe(true);
+    expect(isDestructiveBashCommand("echo ok\nrm -rf /")).toBe(true);
+    expect(isDestructiveBashCommand("echo ok || powershell -Command Remove-Item -Recurse -Force C:\\")).toBe(true);
+  });
+
   it("不误伤普通命令", () => {
     for (const cmd of [
       "ls -la",
@@ -110,6 +139,9 @@ describe("isDestructiveBashCommand", () => {
       "git push origin main",
       "git commit -m x",
       "find . -name '*.js'",
+      "Remove-Item -Recurse -Force build",
+      "rd /s build",
+      "del /s /q build",
     ]) {
       expect(isDestructiveBashCommand(cmd), cmd).toBe(false);
     }

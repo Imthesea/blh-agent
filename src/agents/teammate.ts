@@ -403,8 +403,9 @@ export class TeammateRuntime {
    * 3. 调用模型（AI），把当前对话历史和可用工具清单交给它，让它决定下一步。
    *    如果调用出错，就发条错误消息给 lead，然后返回 "stop"。
    * 4. 模型如果要调用工具，就逐个执行，把结果回填进对话，返回 "continue"（接着再来一轮）。
-   * 5. 模型如果不调用工具，说明它这一轮给出了最终答复：
-   *    - 如果计划还在等审批，就把自己标成"等待审批"。
+   * 5. 模型如果不调用工具，说明它这一轮给出了文本答复：
+   *    - 如果计划还没通过，就把审批要求写回对话并返回 "continue"，让模型重新提交计划。
+   *    - 如果计划在等审批，就把自己标成"等待审批"。
    *    - 否则汇报结果给 lead，释放任务，标成"空闲"，返回 "idle"。
    */
   async work(): Promise<string> {
@@ -435,11 +436,20 @@ export class TeammateRuntime {
     }
     const summary = assistant.content ?? "";
     const gate = this.team.getPlanGate(this.name);
-    if (gate !== "pending" && summary) {
+    if ((gate === "not_required" || gate === "approved") && summary) {
       this.team.sendMessage(this.name, "lead", summary, "result");
     }
     if (gate === "pending") {
       this.team.setActive(this.name, "waiting_approval");
+      return "idle";
+    }
+    if (gate === "required" || gate === "rejected") {
+      const notice =
+        gate === "rejected"
+          ? "[Plan rejected] Revise the plan and call submit_plan again."
+          : "[Plan required] Call submit_plan and wait for approval before changing files or using bash.";
+      this.messages.push({ role: "user", content: notice });
+      return "continue";
     } else {
       this.team.releaseCompleted(this.name);
       this.team.setActive(this.name, "idle");

@@ -11,7 +11,7 @@ import type { TurnLock, WebTurnRunner } from "../src/types.js";
 import type { Server } from "node:http";
 import { makeTestSessionStore } from "./helpers.js";
 
-function makeContext(workdir: string): WebContext {
+async function makeContext(workdir: string): Promise<WebContext> {
   const broadcaster = new SSEBroadcaster();
   const approvals = new ApprovalCoordinator((event) => broadcaster.broadcast(event));
   const runner: WebTurnRunner = {
@@ -24,12 +24,12 @@ function makeContext(workdir: string): WebContext {
   const lock: TurnLock = { withLock: async <T,>(fn: () => Promise<T>) => fn() };
   const sessionStore = makeTestSessionStore();
   const session = new SessionManager(runner, lock, (event) => broadcaster.broadcast(event), approvals, sessionStore);
-  session.create(workdir);
+  await session.create(workdir);
   return { session, broadcaster, workdir, staticDir: null, sessionStore };
 }
 
-async function listen(ctx: WebContext): Promise<{ server: Server; url: string }> {
-  const server = createWebServer(ctx);
+async function listen(ctx: WebContext | Promise<WebContext>): Promise<{ server: Server; url: string }> {
+  const server = createWebServer(await ctx);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   const port = typeof address === "object" && address !== null ? address.port : 0;
@@ -281,6 +281,34 @@ describe("http 路由", () => {
       req.on("error", reject);
       req.end(JSON.stringify({ text: "hi" }));
     });
+  });
+
+  it("chunked body 超限时无需等待请求结束即返回 413", async () => {
+    const { server, url } = await listen(makeContext(tmpDir));
+    servers.push(server);
+    const parsed = new URL(url);
+    let request!: http.ClientRequest;
+    const response = await new Promise<http.IncomingMessage>((resolve, reject) => {
+      request = http.request(
+        {
+          host: parsed.hostname,
+          port: parsed.port,
+          path: "/api/message",
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-blh-web": "1",
+            "Transfer-Encoding": "chunked",
+          },
+        },
+        resolve,
+      );
+      request.on("error", reject);
+      request.write("x".repeat(1024 * 1024 + 1));
+    });
+    expect(response.statusCode).toBe(413);
+    response.resume();
+    request.destroy();
   });
 
   it("POST /api/stop 返回 200 ok", async () => {

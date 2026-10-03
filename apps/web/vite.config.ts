@@ -4,6 +4,11 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
+const webPort = process.env.BLH_WEB_PORT ?? "8123";
+if (!/^\d+$/.test(webPort) || Number.parseInt(webPort, 10) < 1 || Number.parseInt(webPort, 10) > 65535) {
+  throw new Error("BLH_WEB_PORT must be an integer between 1 and 65535");
+}
+const apiTarget = process.env.BLH_API_TARGET ?? `http://127.0.0.1:${webPort}`;
 
 export default defineConfig({
   plugins: [react()],
@@ -20,7 +25,7 @@ export default defineConfig({
     open: true,
     proxy: {
       "/api": {
-        target: process.env.BLH_API_TARGET ?? "http://127.0.0.1:8123",
+        target: apiTarget,
         changeOrigin: true,
       },
     },

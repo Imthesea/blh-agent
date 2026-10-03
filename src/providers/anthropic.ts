@@ -59,11 +59,23 @@ function toAnthropicMessages(messages: ChatMessage[]): {
       result.push({ role: "assistant", content: blocks });
       continue;
     }
-    // role === "tool"
-    result.push({
-      role: "user",
-      content: [{ type: "tool_result", tool_use_id: message.tool_call_id ?? "", content: message.content ?? "" }],
-    });
+    if (message.role === "tool") {
+      const block: Anthropic.ToolResultBlockParam = {
+        type: "tool_result",
+        tool_use_id: message.tool_call_id ?? "",
+        content: message.content ?? "",
+      };
+      const previous = result[result.length - 1];
+      if (
+        previous?.role === "user" &&
+        Array.isArray(previous.content) &&
+        previous.content.every((item) => item.type === "tool_result")
+      ) {
+        previous.content.push(block);
+      } else {
+        result.push({ role: "user", content: [block] });
+      }
+    }
   }
   return { ...(system !== undefined ? { system } : {}), messages: result };
 }

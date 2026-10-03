@@ -10,7 +10,7 @@ import { ApprovalCoordinator } from "../src/approval.js";
 import type { TraceModule, TurnLock, WebTurnRunner } from "../src/types.js";
 import { makeTestSessionStore } from "./helpers.js";
 
-function makeContext(workdir: string, trace?: TraceModule): WebContext {
+async function makeContext(workdir: string, trace?: TraceModule): Promise<WebContext> {
   const broadcaster = new SSEBroadcaster();
   const approvals = new ApprovalCoordinator((event) => broadcaster.broadcast(event));
   const runner: WebTurnRunner = {
@@ -20,12 +20,12 @@ function makeContext(workdir: string, trace?: TraceModule): WebContext {
   const lock: TurnLock = { withLock: async <T,>(fn: () => Promise<T>) => fn() };
   const sessionStore = makeTestSessionStore();
   const session = new SessionManager(runner, lock, (event) => broadcaster.broadcast(event), approvals, sessionStore);
-  session.create(workdir);
+  await session.create(workdir);
   return { session, broadcaster, workdir, staticDir: null, sessionStore, ...(trace !== undefined ? { trace } : {}) };
 }
 
-async function listen(ctx: WebContext): Promise<{ server: Server; url: string }> {
-  const server = createWebServer(ctx);
+async function listen(ctx: WebContext | Promise<WebContext>): Promise<{ server: Server; url: string }> {
+  const server = createWebServer(await ctx);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   const port = typeof address === "object" && address !== null ? address.port : 0;

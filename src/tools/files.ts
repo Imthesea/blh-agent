@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
 import path from "node:path";
 
 export class PathEscapeError extends Error {}
@@ -60,10 +61,39 @@ export async function writeFile(
 ): Promise<string> {
   const filePath = safePath(workdir, requireString(args.path, "path"));
   const content = requireString(args.content, "content");
-  await fs.mkdir(path.dirname(filePath), { recursive: true });
-  await assertInside(workdir, await fs.realpath(path.dirname(filePath)));
-  await fs.writeFile(filePath, content, "utf8");
+  const parentPath = path.dirname(filePath);
+  await assertMissingPathInside(workdir, parentPath);
+  await fs.mkdir(parentPath, { recursive: true });
+  await assertInside(workdir, await fs.realpath(parentPath));
+  try {
+    await assertInside(workdir, await fs.realpath(filePath));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  const noFollow = typeof fsConstants.O_NOFOLLOW === "number" ? fsConstants.O_NOFOLLOW : 0;
+  const flags = fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | noFollow;
+  const handle = await fs.open(filePath, flags);
+  try {
+    await handle.writeFile(content, "utf8");
+  } finally {
+    await handle.close();
+  }
   return `wrote ${content.length} chars to ${filePath}`;
+}
+
+async function assertMissingPathInside(workdir: string, inputPath: string): Promise<void> {
+  let current = inputPath;
+  for (;;) {
+    try {
+      await assertInside(workdir, await fs.realpath(current));
+      return;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      const parent = path.dirname(current);
+      if (parent === current) throw error;
+      current = parent;
+    }
+  }
 }
 
 export async function editFile(

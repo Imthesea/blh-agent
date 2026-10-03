@@ -58,36 +58,149 @@ const DANGEROUS_RM_DIRS = [
   "/media",
 ];
 
-function isDangerousRmTarget(target: string): boolean {
-  if (target === "/" || target === "/*") return true;
-  const t = target.replace(/\/+$/, "");
-  if (t === "") return false;
-  if (t === "~" || t.startsWith("~/")) return true;
-  return DANGEROUS_RM_DIRS.some((d) => t === d || t.startsWith(d + "/"));
-}
+const WINDOWS_SYSTEM_DIRS = [
+  "c:/windows",
+  "c:/program files",
+  "c:/program files (x86)",
+  "c:/programdata",
+  "c:/users",
+];
+const WINDOWS_ENV_DIRS = new Set([
+  "%userprofile%",
+  "%programfiles%",
+  "%programfiles(x86)%",
+  "%programdata%",
+  "%systemroot%",
+]);
 
-function hasForceAndRecursive(flags: string[]): boolean {
-  let recursive = false;
-  let force = false;
-  for (const w of flags) {
-    if (w === "--recursive") recursive = true;
-    else if (w === "--force") force = true;
-    else if (w.startsWith("-") && !w.startsWith("--")) {
-      const letters = w.slice(1);
-      if (/[rR]/.test(letters)) recursive = true;
-      if (/f/.test(letters)) force = true;
+function splitCommandSegments(command: string): string[] {
+  const segments: string[] = [];
+  let current = "";
+  let quote = "";
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i] ?? "";
+    if (quote !== "") {
+      current += ch;
+      if (ch === quote) quote = "";
+      continue;
     }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      current += ch;
+      continue;
+    }
+    if (ch === ";" || ch === "\n") {
+      segments.push(current.trim());
+      current = "";
+      continue;
+    }
+    if ((ch === "&" && command[i + 1] === "&") || (ch === "|" && command[i + 1] === "|")) {
+      segments.push(current.trim());
+      current = "";
+      i++;
+      continue;
+    }
+    current += ch;
   }
-  return recursive && force;
+  segments.push(current.trim());
+  return segments.filter(Boolean);
 }
 
-function isDangerousRm(cmd: string): boolean {
-  if (!/^rm\s/.test(cmd)) return false;
-  const words = cmd.split(/\s+/).filter(Boolean);
-  const rest = words.slice(1);
-  if (!hasForceAndRecursive(rest)) return false;
-  const targets = rest.filter((w) => !w.startsWith("-"));
-  return targets.some(isDangerousRmTarget);
+function splitWords(segment: string): string[] {
+  const words: string[] = [];
+  let current = "";
+  let quote = "";
+  for (const ch of segment) {
+    if (quote !== "") {
+      if (ch === quote) quote = "";
+      else current += ch;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (/\s/.test(ch)) {
+      if (current !== "") words.push(current);
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  if (current !== "") words.push(current);
+  return words;
+}
+
+function normalizeCommand(command: string | undefined): string {
+  return (command ?? "").toLowerCase().replace(/\.exe$/, "");
+}
+
+function isDangerousDeleteTarget(target: string): boolean {
+  if (/^\/+\*?$/.test(target)) return true;
+  const trimmed = target.replace(/[\\/]+$/, "");
+  if (trimmed === "") return false;
+  if (
+    trimmed === "." ||
+    trimmed === "./*" ||
+    trimmed === ".\\*" ||
+    trimmed === "~" ||
+    trimmed.startsWith("~/") ||
+    trimmed === "$HOME" ||
+    trimmed === "${HOME}"
+  ) {
+    return true;
+  }
+  if (/^[a-z]:$/i.test(trimmed) || /^[a-z]:[\\/]\*$/i.test(trimmed)) return true;
+  if (
+    /^%systemdrive%$/i.test(trimmed) ||
+    /^%systemdrive%[\\/]\*$/i.test(trimmed) ||
+    WINDOWS_ENV_DIRS.has(trimmed.toLowerCase()) ||
+    /^%userprofile%[\\/]\*$/i.test(trimmed)
+  ) {
+    return true;
+  }
+  const windowsPath = trimmed.replace(/\\/g, "/").toLowerCase();
+  if (WINDOWS_SYSTEM_DIRS.some((dir) => windowsPath === dir || windowsPath === `${dir}/*`)) {
+    return true;
+  }
+  const posixPath = trimmed.replace(/\\/g, "/");
+  return DANGEROUS_RM_DIRS.some((dir) => posixPath === dir || posixPath.startsWith(`${dir}/`));
+}
+
+function hasRmRecursiveFlag(args: string[]): boolean {
+  return args.some((arg) => {
+    if (arg === "--recursive") return true;
+    return arg.startsWith("-") && !arg.startsWith("--") && /[rR]/.test(arg.slice(1));
+  });
+}
+
+function isDangerousRm(words: string[]): boolean {
+  if (normalizeCommand(words[0]) !== "rm") return false;
+  const args = words.slice(1);
+  if (!hasRmRecursiveFlag(args)) return false;
+  return args.filter((arg) => !arg.startsWith("-")).some(isDangerousDeleteTarget);
+}
+
+function isDangerousWindowsDelete(words: string[]): boolean {
+  const command = normalizeCommand(words[0]);
+  if (!["rd", "rmdir", "del", "erase"].includes(command)) return false;
+  const args = words.slice(1);
+  if (!args.some((arg) => /^\/s$/i.test(arg))) return false;
+  return args.filter((arg) => !arg.startsWith("/")).some(isDangerousDeleteTarget);
+}
+
+function isDangerousPowerShellRemove(words: string[]): boolean {
+  if (normalizeCommand(words[0]) !== "remove-item") return false;
+  const args = words.slice(1);
+  if (!args.some((arg) => /^-(?:recurse|r)$/i.test(arg))) return false;
+  return args.filter((arg) => !arg.startsWith("-")).some(isDangerousDeleteTarget);
+}
+
+function powerShellCommandSegments(words: string[]): string[] | null {
+  if (!["powershell", "pwsh"].includes(normalizeCommand(words[0]))) return null;
+  const commandIndex = words.findIndex((word) => /^-(?:command|c)$/i.test(word));
+  if (commandIndex === -1) return null;
+  return splitCommandSegments(words.slice(commandIndex + 1).join(" "));
 }
 
 function isForcePush(cmd: string): boolean {
@@ -99,7 +212,9 @@ function isForcePush(cmd: string): boolean {
 
 function isFindDelete(cmd: string): boolean {
   if (!/^find\s/.test(cmd)) return false;
-  const dangerousPath = /^find\s+(\/|\/\*|~)/.test(cmd);
+  const words = splitWords(cmd);
+  const target = words[1] ?? "";
+  const dangerousPath = target !== "." && isDangerousDeleteTarget(target);
   const hasDelete = /(^|\s)-delete(\s|$)/.test(cmd);
   const hasExecRm = /(^|\s)-exec\s+rm\s+.*(?:-rf|-fr|-r\s+-f|-f\s+-r)/.test(cmd);
   return dangerousPath && (hasDelete || hasExecRm);
@@ -108,7 +223,22 @@ function isFindDelete(cmd: string): boolean {
 function isDiskDestroy(cmd: string): boolean {
   if (/^mkfs(\.\S+)?\s+/.test(cmd)) return true;
   if (/^dd\s+.*(^|\s)of=\/dev\//.test(cmd)) return true;
+  if (/^format(\.\S+)?\s+[a-z]:/i.test(cmd)) return true;
   return false;
+}
+
+function isDestructiveSegment(segment: string): boolean {
+  const words = splitWords(segment);
+  const nestedSegments = powerShellCommandSegments(words);
+  if (nestedSegments !== null && nestedSegments.some(isDestructiveSegment)) return true;
+  return (
+    isDangerousRm(words) ||
+    isDangerousWindowsDelete(words) ||
+    isDangerousPowerShellRemove(words) ||
+    isForcePush(segment) ||
+    isFindDelete(segment) ||
+    isDiskDestroy(segment)
+  );
 }
 
 /**
@@ -116,7 +246,7 @@ function isDiskDestroy(cmd: string): boolean {
  * 覆盖：高危 rm -rf、git 强制推送、find 删除、mkfs/dd 写设备。
  */
 export function isDestructiveBashCommand(command: string): boolean {
-  const cmd = command.trim().replace(/\s+/g, " ");
+  const cmd = command.trim();
   if (!cmd) return false;
-  return isDangerousRm(cmd) || isForcePush(cmd) || isFindDelete(cmd) || isDiskDestroy(cmd);
+  return splitCommandSegments(cmd).some(isDestructiveSegment);
 }

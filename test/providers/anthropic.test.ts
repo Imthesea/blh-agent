@@ -58,6 +58,48 @@ describe("AnthropicProvider", () => {
     expect(params.tools).toEqual([{ name: "echo", description: "e", input_schema: { type: "object" } }]);
   });
 
+  it("chat 合并连续 tool_result 到同一个 user 消息", async () => {
+    const { AnthropicProvider } = await import("../../src/providers/anthropic.js");
+    const create = vi.fn().mockResolvedValue({
+      content: [{ type: "text", text: "done" }],
+      stop_reason: "end_turn",
+      usage: { input_tokens: 10, output_tokens: 2 },
+    });
+    const provider = new AnthropicProvider(config, makeClient(create));
+    await provider.chat(
+      [
+        {
+          role: "assistant",
+          content: "",
+          tool_calls: [
+            { id: "t1", type: "function", function: { name: "echo", arguments: "{}" } },
+            { id: "t2", type: "function", function: { name: "echo", arguments: "{}" } },
+          ],
+        },
+        { role: "tool", tool_call_id: "t1", content: "one" },
+        { role: "tool", tool_call_id: "t2", content: "two" },
+      ],
+      [echoTool],
+    );
+    const params = create.mock.calls[0]?.[0];
+    expect(params.messages).toEqual([
+      {
+        role: "assistant",
+        content: [
+          { type: "tool_use", id: "t1", name: "echo", input: {} },
+          { type: "tool_use", id: "t2", name: "echo", input: {} },
+        ],
+      },
+      {
+        role: "user",
+        content: [
+          { type: "tool_result", tool_use_id: "t1", content: "one" },
+          { type: "tool_result", tool_use_id: "t2", content: "two" },
+        ],
+      },
+    ]);
+  });
+
   it("chatCompletion 返回 usage", async () => {
     const { AnthropicProvider } = await import("../../src/providers/anthropic.js");
     const create = vi.fn().mockResolvedValue({

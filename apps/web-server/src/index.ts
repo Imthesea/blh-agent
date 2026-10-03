@@ -29,6 +29,26 @@ export interface RunningWebServer {
   close(): Promise<void>;
 }
 
+const DEFAULT_WEB_PORT = 8123;
+
+function resolveWebPort(port: number | undefined): number {
+  if (port !== undefined) {
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      throw new Error("port must be an integer between 1 and 65535");
+    }
+    return port;
+  }
+  const envPort = process.env.BLH_WEB_PORT;
+  if (envPort !== undefined && envPort !== "") {
+    const parsed = Number.parseInt(envPort, 10);
+    if (!/^\d+$/.test(envPort) || parsed < 1 || parsed > 65535) {
+      throw new Error("BLH_WEB_PORT must be an integer between 1 and 65535");
+    }
+    return parsed;
+  }
+  return DEFAULT_WEB_PORT;
+}
+
 export async function startWebServer(options: WebServerOptions): Promise<RunningWebServer> {
   const workdir = options.workdir;
   initLogger(workdir);
@@ -82,7 +102,7 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
     ...(options.trace !== undefined ? { trace: options.trace } : {}),
   });
 
-  const port = options.port !== undefined && Number.isInteger(options.port) ? options.port : 8123;
+  const port = resolveWebPort(options.port);
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, "127.0.0.1", () => resolve());

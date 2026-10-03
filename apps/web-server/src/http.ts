@@ -74,10 +74,19 @@ const MAX_LOG_MODULE = 256;
 
 function readBody(req: IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const fail = (error: HttpError) => {
+      if (settled) return;
+      settled = true;
+      req.removeAllListeners("data");
+      req.removeAllListeners("end");
+      req.removeAllListeners("error");
+      reject(error);
+      req.resume();
+    };
     const contentLength = Number(req.headers["content-length"]);
     if (Number.isFinite(contentLength) && contentLength > MAX_BODY_BYTES) {
-      reject(new HttpError(413, "request body too large"));
-      req.resume();
+      fail(new HttpError(413, "request body too large"));
       return;
     }
     const chunks: Buffer[] = [];
@@ -85,13 +94,13 @@ function readBody(req: IncomingMessage): Promise<unknown> {
     req.on("data", (chunk: Buffer) => {
       total += chunk.length;
       if (total > MAX_BODY_BYTES) {
-        reject(new HttpError(413, "request body too large"));
-        req.resume();
+        fail(new HttpError(413, "request body too large"));
         return;
       }
       chunks.push(chunk);
     });
     req.on("end", () => {
+      if (settled) return;
       const raw = Buffer.concat(chunks).toString("utf8");
       if (raw.trim() === "") {
         resolve({});
@@ -299,7 +308,7 @@ async function handleApi(
   }
 
   if (method === "POST" && pathname === "/api/session/new") {
-    const handle = ctx.session.create(ctx.workdir);
+    const handle = await ctx.session.create(ctx.workdir);
     json(res, 200, { sessionId: handle.id });
     return;
   }
@@ -315,7 +324,7 @@ async function handleApi(
       json(res, 400, { error: "invalid session file" });
       return;
     }
-    const handle = ctx.session.resume(ctx.workdir, file);
+    const handle = await ctx.session.resume(ctx.workdir, file);
     json(res, 200, { sessionId: handle.id });
     return;
   }
@@ -331,7 +340,7 @@ async function handleApi(
       json(res, 400, { error: "invalid session file" });
       return;
     }
-    ctx.session.remove(ctx.workdir, file);
+    await ctx.session.remove(ctx.workdir, file);
     json(res, 200, { ok: true });
     return;
   }

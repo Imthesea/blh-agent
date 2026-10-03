@@ -153,7 +153,7 @@ const USAGE = `用法: blh [-h] [-p 提示词] [--provider 厂商] [--model 模�
                           允许所有 bash 命令，除了硬性禁止规则
   --continue [文件]       继续之前的会话（最近一次，或 .sessions/ 里的文件）
   blh web [--port N] [--dev] [--workdir 目录]
-                          启动 web 交互式工作台（默认 http://127.0.0.1:8123）
+                          启动 web 交互式工作台（端口优先级：--port、BLH_WEB_PORT、8123）
   -h, --help              显示帮助信息并退出`;
 
 /** 程序入口：解析参数，然后按三种模式之一执行——web 工作台、一次性 prompt、交互式 REPL。 */
