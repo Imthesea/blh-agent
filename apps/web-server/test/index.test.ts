@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetLogger } from "@blh/logger";
 import { startWebServer } from "../src/index.js";
 import type { WebTurnRunner } from "../src/types.js";
-import { makeTestSessionStore } from "./helpers.js";
+import { makeTestSessionStore, makeTranscript } from "./helpers.js";
 
 let tmpDir: string;
 
@@ -31,7 +31,7 @@ async function freePort(): Promise<number> {
 
 function makeRunner(): WebTurnRunner {
   return {
-    newSession: () => [],
+    newTranscript: (events) => makeTranscript(events),
     runTurn: async () => {},
     jobs: {
       agentLock: { withLock: async <T,>(fn: () => Promise<T>) => fn() },

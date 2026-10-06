@@ -79,12 +79,12 @@ describe("Harness", () => {
       new ToolRegistry(),
       hooks,
     );
-    const messages = harness.newSession();
-    await harness.runTurn(messages, "hi");
+    const transcript = harness.newTranscript();
+    await harness.runTurn(transcript, "hi");
     expect(events).toEqual(["submit", "stop"]);
-    expect(messages[0]).toEqual({ role: "system", content: harness.systemPrompt });
-    expect(messages[1]).toEqual({ role: "user", content: "hi" });
-    expect(messages[2]).toEqual({ role: "assistant", content: "hello!" });
+    expect(transcript.messages[0]).toEqual({ role: "system", content: harness.systemPrompt });
+    expect(transcript.messages[1]).toEqual({ role: "user", content: "hi" });
+    expect(transcript.messages[2]).toEqual({ role: "assistant", content: "hello!" });
   });
 
   it("goalCommand parses /goal as status", () => {
@@ -138,16 +138,16 @@ describe("Harness.runDreamTurn", () => {
       makeToolCallMessage("write_file", { path: ".memory/dreamed.md", content: DREAM_FILE }),
       makeTextMessage("done"),
     ]);
-    const messages = harness.newSession();
-    const before = messages.length;
-    await harness.runDreamTurn(messages, new AbortController().signal);
+    const transcript = harness.newTranscript();
+    const before = transcript.messages.length;
+    await harness.runDreamTurn(transcript, new AbortController().signal);
     expect(existsSync(path.join(workdir, ".memory", "dreamed.md"))).toBe(true);
     expect(store.readMemoryIndex()).toContain("dreamed.md");
     expect(store.listMemoryFiles().some((r) => r.name === "dreamed")).toBe(true);
     expect(
       new Memory(store, new MockProvider([])).dream.readState().lastSuccess,
     ).toBeGreaterThan(0);
-    expect(messages.length).toBeGreaterThan(before); // 成功时 dream 对话留在会话里
+    expect(transcript.messages.length).toBeGreaterThan(before); // 成功时 dream 对话留在会话里
     rmSync(workdir, { recursive: true, force: true });
   });
 
@@ -160,7 +160,7 @@ describe("Harness.runDreamTurn", () => {
     // 包装 provider：第二次 chat（即工具已执行、文件已写入）时 abort
     let calls = 0;
     const provider: ChatProvider = {
-      chat: (m, t, mt, s) => {
+      chat: (m: ChatMessage[], t, mt, s) => {
         calls += 1;
         if (calls === 2) controller.abort();
         return inner.chat(m, t, mt, s);
@@ -181,12 +181,12 @@ describe("Harness.runDreamTurn", () => {
       undefined,
       memory,
     );
-    const messages = harness.newSession();
-    const before = messages.length;
-    await harness.runDreamTurn(messages, controller.signal);
+    const transcript = harness.newTranscript();
+    const before = transcript.messages.length;
+    await harness.runDreamTurn(transcript, controller.signal);
     expect(existsSync(path.join(workdir, ".memory", "dreamed.md"))).toBe(false);
     expect(store.listMemoryFiles().find((r) => r.name === "keep")?.body).toBe("original");
-    expect(messages.length).toBe(before);
+    expect(transcript.messages.length).toBe(before);
     rmSync(workdir, { recursive: true, force: true });
   });
 
@@ -200,8 +200,8 @@ describe("Harness.runDreamTurn", () => {
     ]);
     store.writeMemoryFile("keep", "project", "d", "original");
     store.rebuildMemoryIndex();
-    const messages = harness.newSession();
-    await harness.runDreamTurn(messages, new AbortController().signal);
+    const transcript = harness.newTranscript();
+    await harness.runDreamTurn(transcript, new AbortController().signal);
     expect(existsSync(path.join(workdir, ".memory", "empty.md"))).toBe(false);
     expect(store.listMemoryFiles().find((r) => r.name === "keep")?.body).toBe("original");
     rmSync(workdir, { recursive: true, force: true });
@@ -221,9 +221,9 @@ describe("Harness.runDreamTurn", () => {
       makeDreamTools(noMemoryConfig),
       new HookBus(),
     );
-    const messages = harness.newSession();
-    await harness.runDreamTurn(messages, new AbortController().signal);
-    expect(messages.length).toBe(1); // 只有 system 消息
+    const transcript = harness.newTranscript();
+    await harness.runDreamTurn(transcript, new AbortController().signal);
+    expect(transcript.messages.length).toBe(1); // 只有 system 消息
     expect(await harness.isDreamDue()).toBe(false);
   });
 });

@@ -14,7 +14,7 @@
     "tracing",
     "workflow"
   ],
-  "sharedDirectories": ["process", "config"],
+  "sharedDirectories": ["process", "config", "session"],
   "compositionRoot": "cli",
   "allowedFeatureEdges": [
     ["agents", "planning"],

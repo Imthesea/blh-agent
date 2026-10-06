@@ -11,14 +11,14 @@ import type {
 } from "../../src/contracts/types.js";
 
 class FakeProvider implements ChatProvider {
-  readonly requests: { messages: ChatMessage[]; tools: ToolDefinition[] }[] = [];
+  readonly requests: { messages: readonly ChatMessage[]; tools: ToolDefinition[] }[] = [];
   private scripted: ChatMessage[];
 
   constructor(scripted: ChatMessage[]) {
     this.scripted = [...scripted];
   }
 
-  async chat(messages: ChatMessage[], tools: ToolDefinition[]): Promise<ChatMessage> {
+  async chat(messages: readonly ChatMessage[], tools: ToolDefinition[]): Promise<ChatMessage> {
     this.requests.push({ messages, tools });
     const next = this.scripted.shift();
     if (!next) {
@@ -64,7 +64,7 @@ function longResult(callId: string): ChatMessage {
 }
 
 /** 每条 role=tool 消息都能在前面找到对应调用，且每个 tool_call 都有对应结果 */
-export function assertNoOrphanToolResults(messages: ChatMessage[]): void {
+export function assertNoOrphanToolResults(messages: readonly ChatMessage[]): void {
   const pending = new Map<string, number>();
   for (const msg of messages) {
     if (msg.role === "assistant") {
@@ -221,10 +221,19 @@ describe("ContextCompactor 消息判定原语", () => {
     expect(readFileSync(savedLine.replace("Full output: ", ""), "utf8")).toBe(big);
   });
 
-  it("toolResultBudget 末尾非 tool 时原样返回（同一引用）", () => {
+  it("toolResultBudget 不修改传入数组和消息对象", () => {
     const compactor = makeCompactor(tmpDir);
-    const messages = [toolResult("c1", "x".repeat(40000)), textMsg("done")];
-    expect(compactor.toolResultBudget(messages)).toBe(messages);
+    const big = "b".repeat(ContextCompactor.LARGE_RESULT_CHAR_LIMIT + 1);
+    const messages = [
+      assistantToolCalls("big", "small"),
+      toolResult("big", big),
+      toolResult("small", "small"),
+    ];
+    const before = structuredClone(messages);
+    const result = compactor.toolResultBudget(messages, "small".length + 1000);
+    expect(result).not.toBe(messages);
+    expect(messages).toEqual(before);
+    expect(result[1]?.content?.startsWith("<persisted-output>")).toBe(true);
   });
 
   it("snipCompact 保护头部 tool 配对", () => {
@@ -309,6 +318,23 @@ describe("microCompact / fitToolResults", () => {
 
   afterEach(() => {
     rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("microCompact 和 fitToolResults 都不修改输入", () => {
+    const compactor = makeCompactor(tmpDir);
+    const messages = [
+      assistantToolCalls("old"), longResult("old"),
+      assistantToolCalls("new"), longResult("new"),
+      textMsg("working"),
+    ];
+    const before = structuredClone(messages);
+    const micro = compactor.microCompact(messages);
+    expect(micro).not.toBe(messages);
+    expect(messages).toEqual(before);
+
+    const fit = compactor.fitToolResults(messages, ContextCompactor.estimateChars(messages) - 100);
+    expect(fit).not.toBe(messages);
+    expect(messages).toEqual(before);
   });
 
   it("microCompact 已消费旧结果落盘替换，保留最近 3 条", () => {
@@ -435,15 +461,19 @@ describe("summarizeHistory / compactHistory / reactiveCompact", () => {
       { role: "system", content: "sys" },
       userMsg("old work"),
     ];
-    const compacted = await compactor.compactHistory(messages, "fix the bug");
-    expect(compacted).toHaveLength(1);
-    expect(compacted[0]?.role).toBe("user");
-    const content = compacted[0]?.content ?? "";
+    const prepared = await compactor.compactHistory(messages, "fix the bug");
+    expect(prepared.messages).toHaveLength(1);
+    expect(prepared.messages[0]?.role).toBe("user");
+    const content = prepared.messages[0]?.content ?? "";
     expect(content.startsWith("[已压缩]")).toBe(true);
     expect(content).toContain("当前用户请求：\nfix the bug");
     expect(content).toContain("the summary");
     expect(content).not.toContain("Full transcript:");
     expect(existsSync(path.join(tmpDir, ".transcripts"))).toBe(false);
+    expect(prepared.compaction).toEqual({
+      summaryMessage: prepared.messages[0],
+      firstKeptIndex: null,
+    });
   });
 
   it("reactiveCompact 只摘要旧历史，tail 原样保留", async () => {
@@ -458,12 +488,14 @@ describe("summarizeHistory / compactHistory / reactiveCompact", () => {
       userMsg("u3"), textMsg("a3"), userMsg("u4"), textMsg("a4"),
       userMsg("u5"),
     ];
-    const compacted = await compactor.reactiveCompact([...messages], "continue");
+    const prepared = await compactor.reactiveCompact([...messages], "continue");
     // tailStart = 9 - 5 = 4：只摘要前 4 条，tail 原样保留
     expect(captured).toEqual(messages.slice(0, 4));
-    expect(compacted.slice(1)).toEqual(messages.slice(4));
-    expect(compacted[0]?.content?.startsWith("[响应式压缩]")).toBe(true);
-    assertNoOrphanToolResults(compacted);
+    expect(prepared.messages.slice(1)).toEqual(messages.slice(4));
+    expect(prepared.messages[0]?.content?.startsWith("[响应式压缩]")).toBe(true);
+    expect(prepared.compaction?.firstKeptIndex).toBe(4);
+    expect(prepared.compaction?.summaryMessage).toBe(prepared.messages[0]);
+    assertNoOrphanToolResults(prepared.messages);
   });
 
   it("reactiveCompact 切点落在 tool 段时回退保护配对", async () => {
@@ -484,11 +516,12 @@ describe("summarizeHistory / compactHistory / reactiveCompact", () => {
       textMsg("a3"),                       // 7
       userMsg("u4"),                       // 8
     ];
-    const compacted = await compactor.reactiveCompact([...messages], "continue");
+    const prepared = await compactor.reactiveCompact([...messages], "continue");
     // 切点回退到 3，assistant 及其结果一起进 tail；摘要只覆盖前 3 条
     expect(captured).toEqual(messages.slice(0, 3));
-    expect(compacted.slice(1)).toEqual(messages.slice(3));
-    assertNoOrphanToolResults(compacted);
+    expect(prepared.messages.slice(1)).toEqual(messages.slice(3));
+    expect(prepared.compaction?.firstKeptIndex).toBe(3);
+    assertNoOrphanToolResults(prepared.messages);
   });
 });
 
@@ -516,7 +549,7 @@ describe("prepare 管线", () => {
       );
     }
     messages.push(textMsg("continue"));
-    const prepared = await compactor.prepare(messages, "inspect the repository");
+    const { messages: prepared } = await compactor.prepare(messages, "inspect the repository");
     const actual = prepared.filter((m) => m.role === "tool").map((m) => m.content);
     expect(actual).toEqual(expected);
   });
@@ -534,7 +567,7 @@ describe("prepare 管线", () => {
     // 动态阈值：恰好在 micro 替换最旧 2 条后降到阈值内，不触发 fit/compactHistory；
     // 避免硬编码阈值受 OpenAI 包装开销与临时路径长度影响
     compactor.contextCharLimit = ContextCompactor.estimateChars(messages) - 1200;
-    const prepared = await compactor.prepare(messages, "inspect the repository");
+    const { messages: prepared } = await compactor.prepare(messages, "inspect the repository");
     const actual = prepared.filter((m) => m.role === "tool").map((m) => m.content ?? "");
     for (const content of actual.slice(0, 2)) {
       expect(content.startsWith("[Earlier tool result saved at ")).toBe(true);
@@ -557,7 +590,7 @@ describe("prepare 管线", () => {
     };
     const output = "latest-result:" + "x".repeat(60000);
     const messages = [assistantToolCalls("latest"), toolResult("latest", output)];
-    const prepared = await compactor.prepare(messages, "inspect the result");
+    const { messages: prepared } = await compactor.prepare(messages, "inspect the result");
     expect(prepared).toHaveLength(2);
     const content = prepared[1]?.content ?? "";
     expect(content.startsWith("<persisted-output>")).toBe(true);
@@ -575,10 +608,11 @@ describe("prepare 管线", () => {
       userMsg("u" + "x".repeat(5000)),
       textMsg("a" + "y".repeat(5000)),
     ];
-    const prepared = await compactor.prepare(messages, "big task");
+    const { messages: prepared, compaction } = await compactor.prepare(messages, "big task");
     expect(prepared).toHaveLength(1);
     expect(prepared[0]?.content?.startsWith("[已压缩]")).toBe(true);
     expect(prepared[0]?.content).toContain("当前用户请求：\nbig task");
+    expect(compaction?.firstKeptIndex).toBeNull();
   });
 });
 
@@ -613,7 +647,7 @@ describe("ContextCompactor（trace 事件）", () => {
     });
     const messages = [userMsg("a"), textMsg("b"), userMsg("c")];
     const result = await compactor.compactHistory(messages, "req");
-    expect(result).toHaveLength(1);
+    expect(result.messages).toHaveLength(1);
     expect(readTraceEvents(tmpDir)).toEqual([
       expect.objectContaining({ type: "compact", kind: "proactive", before_msgs: 3, after_msgs: 1 }),
     ]);
@@ -636,7 +670,7 @@ describe("ContextCompactor（trace 事件）", () => {
         type: "compact",
         kind: "reactive",
         before_msgs: 8,
-        after_msgs: result.length,
+        after_msgs: result.messages.length,
       }),
     ]);
   });

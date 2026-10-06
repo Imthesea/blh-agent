@@ -84,12 +84,12 @@ export interface Config {
 }
 
 export interface ChatProvider {
-  chat(messages: ChatMessage[], tools: ToolDefinition[], maxTokens?: number, signal?: AbortSignal): Promise<ChatMessage>;
+  chat(messages: readonly ChatMessage[], tools: ToolDefinition[], maxTokens?: number, signal?: AbortSignal): Promise<ChatMessage>;
   /** 带本次响应 usage 的非流式调用；agent loop 优先使用，避免共享 lastUsage 在并发下错记。 */
-  chatWithUsage?(messages: ChatMessage[], tools: ToolDefinition[], maxTokens?: number, signal?: AbortSignal): Promise<{ message: ChatMessage; usage: ChatUsage | null }>;
-  stream?(messages: ChatMessage[], tools: ToolDefinition[], maxTokens?: number, signal?: AbortSignal): AsyncIterable<ProviderStreamEvent>;
+  chatWithUsage?(messages: readonly ChatMessage[], tools: ToolDefinition[], maxTokens?: number, signal?: AbortSignal): Promise<{ message: ChatMessage; usage: ChatUsage | null }>;
+  stream?(messages: readonly ChatMessage[], tools: ToolDefinition[], maxTokens?: number, signal?: AbortSignal): AsyncIterable<ProviderStreamEvent>;
   /** 无 tools 单轮并返回 usage（供 workflow 记账）。可选：未实现时 workflow 不可用。 */
-  chatCompletion?(messages: ChatMessage[], maxTokens?: number): Promise<{ message: ChatMessage; usage: ChatUsage }>;
+  chatCompletion?(messages: readonly ChatMessage[], maxTokens?: number): Promise<{ message: ChatMessage; usage: ChatUsage }>;
   /** 最近一次 chat()/chatCompletion() 的 token 用量（非流式路径记账用）；未实现或未调用时返回 undefined。 */
   lastUsage?(): ChatUsage | undefined;
 }

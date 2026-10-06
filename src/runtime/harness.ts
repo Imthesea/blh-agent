@@ -5,6 +5,8 @@ import { USER_PROMPT_SUBMIT, STOP } from "../contracts/hooks.js";
 import { agentLoop, TurnCancelledError } from "./loop.js";
 import type { EventBus } from "./events.js";
 import { runInScheduledTurn, runInDreamTurn } from "./security-context.js";
+import { Transcript } from "../session/transcript.js";
+import type { SessionEvent } from "../session/transcript.js";
 import * as path from "node:path";
 import { DEFAULT_SHUTDOWN_TIMEOUT_MS, type LifecycleManager } from "@blh/lifecycle";
 import type {
@@ -59,9 +61,15 @@ export class Harness implements AgentLoopRuntime {
     this.systemPrompt = section ? `${base}\n\n${section}` : base;
   }
 
-  /** 开启一个新会话：只包含一条 system 消息（系统提示词）。 */
-  newSession(): ChatMessage[] {
-    return [{ role: "system", content: this.systemPrompt }];
+  /** 创建新会话，或从既有事件重放出一个会话。 */
+  newTranscript(events?: readonly SessionEvent[]): Transcript {
+    return new Transcript({
+      system: { role: "system", content: this.systemPrompt },
+      ...(events !== undefined ? { events } : {}),
+      ...(this.sessionStore !== undefined
+        ? { persist: (event) => this.sessionStore?.appendEvent(event) }
+        : {}),
+    });
   }
 
   /** 解析 /goal 前缀命令,返回 "status"/"clear"/"set"/null。 */
@@ -82,14 +90,14 @@ export class Harness implements AgentLoopRuntime {
   }
 
   /** 拼完整的系统提示词：如果有记忆，就把记忆部分追加到基础提示词后面。 */
-  private async fullSystemPrompt(messages: ChatMessage[]): Promise<string> {
+  private async fullSystemPrompt(messages: readonly ChatMessage[]): Promise<string> {
     const section = this.memory ? await this.memory.systemSection(messages) : "";
     return section ? `${this.systemPrompt}\n\n${section}` : this.systemPrompt;
   }
 
   /** 跑一轮用户对话：把用户输入加进对话，处理记忆，然后交给 agentLoop 执行并收尾。 */
   async runTurn(
-    messages: ChatMessage[],
+    transcript: Transcript,
     text: string,
     events?: EventBus,
     signal?: AbortSignal,
@@ -98,33 +106,33 @@ export class Harness implements AgentLoopRuntime {
     this.goal?.beginQuery();
     await this.hooks.trigger(USER_PROMPT_SUBMIT, { text });
     const userMessage: ChatMessage = { role: "user", content: text };
-    messages.push(userMessage);
-    this.sessionStore?.append(userMessage);
-    const systemMessage = messages[0];
-    if (this.memory && systemMessage) {
-      systemMessage.content = await this.fullSystemPrompt(messages);
+    transcript.append(userMessage);
+    if (this.memory) {
+      transcript.setSystem(await this.fullSystemPrompt(transcript.messages));
     }
-    await agentLoop(this, messages, text, events, signal);
+    await agentLoop(this, transcript, text, events, signal);
     await this.hooks.trigger(STOP, {});
-    if (this.memory && (await this.memory.extract(messages))) {
+    if (this.memory && (await this.memory.extract(transcript.messages))) {
       await this.memory.consolidate();
     }
   }
 
   /** 跑一轮定时任务：取出到期的定时任务注入对话，执行一轮 agentLoop；出错或被打断就回滚并重新排队。 */
-  async runScheduledTurn(messages: ChatMessage[], signal?: AbortSignal): Promise<void> {
+  async runScheduledTurn(transcript: Transcript, signal?: AbortSignal): Promise<void> {
     const jobs = this.jobs;
     if (jobs === undefined) return;
-    const scheduledStart = messages.length;
-    const fired = jobs.consumeAndInjectCron(messages);
+    const boundary = transcript.lastSeq;
+    const fired = jobs.consumeAndInjectCron(transcript);
     if (fired.length === 0) return;
     for (const job of fired) {
       this.tracer?.event("job", { kind: "cron", name: job.id, status: "fired" });
     }
     try {
-      await runInScheduledTurn(() => agentLoop(this, messages, "[scheduled]", undefined, signal));
+      await runInScheduledTurn(() =>
+        agentLoop(this, transcript, "[scheduled]", undefined, signal),
+      );
     } catch (error) {
-      messages.splice(scheduledStart);
+      transcript.rollbackTo(boundary);
       jobs.cron.restore(fired);
       throw error;
     }
@@ -132,7 +140,7 @@ export class Harness implements AgentLoopRuntime {
       for (const job of fired) {
         this.tracer?.event("job", { kind: "cron", name: job.id, status: "aborted" });
       }
-      messages.splice(scheduledStart);
+      transcript.rollbackTo(boundary);
       jobs.cron.restore(fired);
       return;
     }
@@ -149,19 +157,19 @@ export class Harness implements AgentLoopRuntime {
    * 跑一轮 autodream：注入 dream 提示词，在 dream 权限上下文中执行完整 agent turn。
    * 用户 abort / 任何失败：快照回滚 + 消息回滚 + 记失败（markAttempt 已写，1h 后重试），不向上抛错。
    */
-  async runDreamTurn(messages: ChatMessage[], signal?: AbortSignal): Promise<void> {
+  async runDreamTurn(transcript: Transcript, signal?: AbortSignal): Promise<void> {
     const memory = this.memory;
     if (memory === undefined) return;
     const dream = memory.dream;
     dream.markAttempt();
     const snapshot = dream.snapshot();
-    const dreamStart = messages.length;
+    const boundary = transcript.lastSeq;
     this.tracer?.event("job", { kind: "dream", status: "started" });
     try {
-      messages.push({ role: "user", content: dream.prompt });
+      transcript.append({ role: "user", content: dream.prompt });
       await runInDreamTurn(
         { workdir: this.config.workdir, memoryDir: memory.store.directory },
-        () => agentLoop(this, messages, "[dream]", undefined, signal),
+        () => agentLoop(this, transcript, "[dream]", undefined, signal),
       );
       if (signal?.aborted) throw new TurnCancelledError("dream aborted");
       dream.applyTrash();
@@ -171,7 +179,7 @@ export class Harness implements AgentLoopRuntime {
     } catch (error) {
       dream.restore(snapshot);
       dream.clearTrash();
-      messages.splice(dreamStart);
+      transcript.rollbackTo(boundary);
       this.tracer?.event("job", {
         kind: "dream",
         status: error instanceof TurnCancelledError ? "aborted" : "failed",
@@ -181,12 +189,14 @@ export class Harness implements AgentLoopRuntime {
   }
 
   /** 跑一轮团队任务：把团队消息注入对话，执行一轮 agentLoop 处理。 */
-  async runTeamTurn(messages: ChatMessage[], signal?: AbortSignal): Promise<void> {
+  async runTeamTurn(transcript: Transcript, signal?: AbortSignal): Promise<void> {
     const agents = this.agents;
     if (agents === undefined) return;
-    const events = agents.consumeAndInjectTeam(messages);
+    const events = agents.consumeAndInjectTeam(transcript);
     if (events === 0) return;
-    await runInScheduledTurn(() => agentLoop(this, messages, "[team]", undefined, signal));
+    await runInScheduledTurn(() =>
+      agentLoop(this, transcript, "[team]", undefined, signal),
+    );
     await this.hooks.trigger(STOP, {});
   }
 }

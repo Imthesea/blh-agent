@@ -24,7 +24,6 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { parseArgs } from "node:util";
 import { buildHarness } from "../src/cli/buildHarness.js";
-import { lastAssistantText } from "../src/runtime/loop.js";
 
 /** SWE-bench 数据集里我们用到的字段。 */
 interface SweInstance {
@@ -103,8 +102,8 @@ async function runOne(instance: SweInstance, reposRoot: string, outDir: string):
 
   // 2. 用 blh 跑一轮修复。workdir 指向仓库目录；skipPermissions=true 让 bash 自由跑。
   const harness = buildHarness(repo, { bash_timeout: "300" }, undefined, true);
-  const messages = harness.newSession();
-  await harness.runTurn(messages, wrapPrompt(instance.problem_statement));
+  const transcript = harness.newTranscript();
+  await harness.runTurn(transcript, wrapPrompt(instance.problem_statement));
 
   // 3. 清掉 blh 的运行时产物，只留下真正的代码改动。
   for (const artifact of RUNTIME_ARTIFACTS) {

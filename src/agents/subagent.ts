@@ -1,10 +1,11 @@
 import type { HookBus } from "../runtime/hooks.js";
-import type { ChatMessage, ChatProvider, Config } from "../contracts/types.js";
+import type { ChatProvider, Config } from "../contracts/types.js";
 import { runAgentLoop } from "../runtime/loop.js";
 import type { AgentLoopRuntime } from "../runtime/ports.js";
 import { registerBuiltinTools } from "../tools/index.js";
 import { ToolRegistry } from "../tools/registry.js";
 import { summarize, type Tracer } from "../tracing/tracer.js";
+import { Transcript } from "../session/transcript.js";
 
 const SUB_SYSTEM =
   "你是一个编程智能体。完成给定的任务，然后返回一个简洁的最终回答。";
@@ -37,10 +38,8 @@ export class SubagentRunner {
     const start = Date.now();
     const tracer = this.tracer?.scoped("subagent");
     tracer?.event("subagent", { name: "subagent", status: "spawn", task: summarize(prompt, 200) });
-    const messages: ChatMessage[] = [
-      { role: "system", content: SUB_SYSTEM },
-      { role: "user", content: prompt },
-    ];
+    const transcript = new Transcript({ system: { role: "system", content: SUB_SYSTEM } });
+    transcript.append({ role: "user", content: prompt });
     const runtime: AgentLoopRuntime = {
       systemPrompt: SUB_SYSTEM,
       config: this.config,
@@ -52,7 +51,7 @@ export class SubagentRunner {
     try {
       const result = await runAgentLoop(
         runtime,
-        messages,
+        transcript,
         prompt,
         undefined,
         signal,

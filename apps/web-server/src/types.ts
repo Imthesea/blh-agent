@@ -38,17 +38,43 @@ export interface PermissionRule {
   action: PermissionAction;
 }
 
+/** 会话事件（结构上对应根包的 SessionEvent；web-server 只透传、不解析业务语义）。 */
+export interface SessionEventLike {
+  seq: number;
+  timestamp: string;
+  type?: string;
+  message?: ChatMessage;
+  firstKeptSeq?: number | null;
+  to?: number;
+  target?: number;
+}
+
+/** 会话 header（新格式第一行；旧文件可能没有）。 */
+export interface SessionHeaderLike {
+  type: "session";
+  version: 1;
+  id: string;
+  cwd: string;
+  createdAt: string;
+}
+
+export interface LoadedSessionLike {
+  header: SessionHeaderLike | null;
+  events: SessionEventLike[];
+}
+
 /** 会话存储的最小接口（根 SessionStore 满足）。 */
 export interface SessionStoreLike {
   readonly path: string;
-  append(message: ChatMessage): void;
+  appendEvent(event: SessionEventLike): void;
 }
 
 export interface SessionStoreModule {
   sessionsDir(workdir: string): string;
   create(workdir: string): SessionStoreLike;
   open(filePath: string): SessionStoreLike;
-  load(filePath: string): ChatMessage[];
+  loadSession(filePath: string): LoadedSessionLike;
+  loadMessages(filePath: string): ChatMessage[];
   remove(filePath: string): void;
   latest(workdir: string): string | null;
 }
@@ -74,16 +100,23 @@ export interface WebJobs {
   setDreamTurn(due: () => Promise<boolean>, turn: (signal: AbortSignal) => Promise<void>): void;
 }
 
+/** 投影后的会话视图（结构上对应根包 Transcript）。 */
+export interface TranscriptLike {
+  readonly messages: readonly ChatMessage[];
+  readonly lastSeq: number;
+  readonly systemMessage: ChatMessage | null;
+}
+
 /** SessionManager 依赖的最小会话运行接口（根 Harness 满足）。 */
 export interface WebTurnRunner {
-  newSession(): ChatMessage[];
-  runTurn(messages: ChatMessage[], text: string, events?: WebEventBus, signal?: AbortSignal): Promise<void>;
+  newTranscript(events?: readonly SessionEventLike[]): TranscriptLike;
+  runTurn(transcript: TranscriptLike, text: string, events?: WebEventBus, signal?: AbortSignal): Promise<void>;
   sessionStore?: SessionStoreLike | undefined;
   jobs?: WebJobs | undefined;
   /** 释放长生命周期资源；完整 Harness 会实现。 */
   dispose?(timeoutMs?: number): Promise<void>;
   isDreamDue?(): Promise<boolean>;
-  runDreamTurn?(messages: ChatMessage[], signal?: AbortSignal): Promise<void>;
+  runDreamTurn?(transcript: TranscriptLike, signal?: AbortSignal): Promise<void>;
 }
 
 export interface BuildHarnessDeps {

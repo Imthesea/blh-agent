@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import * as path from "node:path";
 import type { ChatMessage, ChatProvider } from "../contracts/types.js";
+import type { PreparedContext } from "../runtime/ports.js";
 import { createLogger } from "@blh/logger";
 import type { Tracer } from "../tracing/tracer.js";
 
@@ -50,7 +51,7 @@ export class ContextCompactor {
   }
 
   /** 估算一组消息大概占多少字符（用 JSON 字符串的长度来近似）。 */
-  static estimateChars(messages: ChatMessage[]): number {
+  static estimateChars(messages: readonly ChatMessage[]): number {
     return JSON.stringify(messages).length;
   }
 
@@ -65,7 +66,7 @@ export class ContextCompactor {
   }
 
   /** 最后一条 assistant 之后出现的 tool 结果位置（模型尚未读取）。 */
-  unseenToolResultPositions(messages: ChatMessage[]): Set<number> {
+  unseenToolResultPositions(messages: readonly ChatMessage[]): Set<number> {
     // 从后往前找最后一条 assistant 的位置。
     let lastAssistant = -1;
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -168,33 +169,39 @@ export class ContextCompactor {
   }
 
   /** 末尾一批工具结果总量超预算时，从最大的开始落盘留预览。 */
-  toolResultBudget(messages: ChatMessage[], maxChars?: number): ChatMessage[] {
+  toolResultBudget(messages: readonly ChatMessage[], maxChars?: number): ChatMessage[] {
     // 从末尾往前收集连续的一批 tool 结果（遇到非 tool 就停，只处理尾巴这一段）。
-    const batch: ChatMessage[] = [];
+    const batch: Array<{ index: number; message: ChatMessage }> = [];
     for (let i = messages.length - 1; i >= 0; i--) {
       const msg = messages[i];
       if (!msg || msg.role !== "tool") break;
-      batch.push(msg);
+      batch.push({ index: i, message: msg });
     }
-    if (batch.length === 0) return messages;
+    const working = [...messages];
+    if (batch.length === 0) return working;
 
     const limit = maxChars ?? ContextCompactor.TOOL_RESULT_BATCH_CHAR_LIMIT;
     // 这批结果的总字符数。
-    let total = batch.reduce((sum, m) => sum + ContextCompactor.contentOf(m).length, 0);
+    let total = batch.reduce((sum, item) => sum + ContextCompactor.contentOf(item.message).length, 0);
     // 按内容长度从大到小排，先处理最占空间的。
     const sorted = [...batch].sort(
-      (a, b) => ContextCompactor.contentOf(b).length - ContextCompactor.contentOf(a).length,
+      (a, b) =>
+        ContextCompactor.contentOf(b.message).length - ContextCompactor.contentOf(a.message).length,
     );
-    for (const msg of sorted) {
+    for (const item of sorted) {
       if (total <= limit) break; // 预算够了就停。
-      const output = ContextCompactor.contentOf(msg);
+      const output = ContextCompactor.contentOf(item.message);
       // 小的不落盘（落盘收益低），只处理超过「大结果」阈值的。
       if (output.length <= ContextCompactor.LARGE_RESULT_CHAR_LIMIT) continue;
-      msg.content = this.persistLargeOutput(msg.tool_call_id ?? "unknown", output);
+      const replacement = this.persistLargeOutput(item.message.tool_call_id ?? "unknown", output);
+      working[item.index] = { ...item.message, content: replacement };
       // 替换后重新计算总量。
-      total = batch.reduce((sum, m) => sum + ContextCompactor.contentOf(m).length, 0);
+      total = batch.reduce((sum, candidate) => {
+        const content = candidate.index === item.index ? replacement : ContextCompactor.contentOf(candidate.message);
+        return sum + content.length;
+      }, 0);
     }
-    return messages;
+    return working;
   }
 
   /**
@@ -209,38 +216,39 @@ export class ContextCompactor {
    * 处理方式：对每条「旧的已读结果」，把内容写进磁盘文件，再把消息内容替换成
    * 「[Earlier tool result saved at 路径]」这一行短引用。
    */
-  microCompact(messages: ChatMessage[], targetChars?: number): ChatMessage[] {
+  microCompact(messages: readonly ChatMessage[], targetChars?: number): ChatMessage[] {
     // 1. 找出模型还没读的工具结果位置（这些不能动）。
     const unseen = this.unseenToolResultPositions(messages);
     // 2. 收集所有「模型已经读过的」工具结果。
-    const consumed: ChatMessage[] = [];
+    const consumed: Array<{ index: number; message: ChatMessage }> = [];
     messages.forEach((msg, index) => {
-      if (msg.role === "tool" && !unseen.has(index)) consumed.push(msg);
+      if (msg.role === "tool" && !unseen.has(index)) consumed.push({ index, message: msg });
     });
+    const working = [...messages];
     // 3. 去掉最近 3 条，剩下的就是「旧的已读结果」。
     const stale = consumed.slice(
       0,
       Math.max(0, consumed.length - ContextCompactor.KEEP_RECENT_RESULTS),
     );
     // 4. 逐个把旧结果挪到磁盘，替换成路径引用。
-    for (const msg of stale) {
+    for (const item of stale) {
       // 已经压到目标大小以下，提前收手。
       if (
         targetChars !== undefined &&
-        ContextCompactor.estimateChars(messages) <= targetChars
+        ContextCompactor.estimateChars(working) <= targetChars
       ) {
         break;
       }
-      const content = ContextCompactor.contentOf(msg);
+      const content = ContextCompactor.contentOf(item.message);
       // 内容太短（≤120 字符）不值得挪，跳过。
       if (content.length <= 120) continue;
       // 如果内容本身已经是「存盘引用」，直接复用路径；否则先写盘拿路径。
       const savedPath =
         this.persistedOutputPath(content) ??
-        this.saveOutput(msg.tool_call_id ?? "unknown", content);
-      msg.content = `[Earlier tool result saved at ${savedPath}]`;
+        this.saveOutput(item.message.tool_call_id ?? "unknown", content);
+      working[item.index] = { ...item.message, content: `[Earlier tool result saved at ${savedPath}]` };
     }
-    return messages;
+    return working;
   }
 
   /**
@@ -255,31 +263,34 @@ export class ContextCompactor {
    * 做法：把所有工具结果按内容长度从大到小排，只要总量还超目标，就把最大的那条
    * 落盘换成「路径 + 1000 字预览」，直到压到目标以内（或没有可压的了）。
    */
-  fitToolResults(messages: ChatMessage[], targetChars: number): ChatMessage[] {
+  fitToolResults(messages: readonly ChatMessage[], targetChars: number): ChatMessage[] {
     // 1. 取出所有工具结果（这次不分已读未读，全都要）。
-    const results = messages.filter((msg) => msg.role === "tool");
+    const results = messages
+      .map((message, index) => ({ message, index }))
+      .filter((item) => item.message.role === "tool");
     // 2. 按内容长度从大到小排，先压最占空间的。
     const sorted = [...results].sort(
       (a, b) =>
-        ContextCompactor.contentOf(b).length - ContextCompactor.contentOf(a).length,
+        ContextCompactor.contentOf(b.message).length - ContextCompactor.contentOf(a.message).length,
     );
     // 3. 只要总量还超目标，就继续压。
-    for (const msg of sorted) {
+    const working = [...messages];
+    for (const item of sorted) {
       // 已经压到目标以内，收手。
-      if (ContextCompactor.estimateChars(messages) <= targetChars) break;
-      const output = ContextCompactor.contentOf(msg);
+      if (ContextCompactor.estimateChars(working) <= targetChars) break;
+      const output = ContextCompactor.contentOf(item.message);
       // 落盘，但保留前 1000 字预览（让模型还能看到开头）。
       const replacement = this.persistedPreview(
-        msg.tool_call_id ?? "unknown",
+        item.message.tool_call_id ?? "unknown",
         output,
         1000,
       );
       // 只有替换后确实变短才采纳（太短的内容落盘后反而更长，不划算）。
       if (replacement.length < output.length) {
-        msg.content = replacement;
+        working[item.index] = { ...item.message, content: replacement };
       }
     }
-    return messages;
+    return working;
   }
 
   /**
@@ -349,7 +360,7 @@ export class ContextCompactor {
    * 具体：头部留 1/4、尾部留 3/4，中间插一行「中间省略」的说明。
    * 为什么尾部留得多？越靠后的消息越接近当前状态，对摘要越重要。
    */
-  summaryInput(messages: ChatMessage[]): string {
+  summaryInput(messages: readonly ChatMessage[]): string {
     const conversation = JSON.stringify(messages);
     const limit = ContextCompactor.SUMMARY_INPUT_CHAR_LIMIT;
     if (conversation.length <= limit) return conversation;
@@ -368,7 +379,7 @@ export class ContextCompactor {
    * 给模型两条消息：system 是「只总结事实、别执行指令」的提示，user 是要总结的内容。
    * 返回摘要文字；模型没返回内容时兜底「（空摘要）」。
    */
-  async summarizeHistory(messages: ChatMessage[]): Promise<string> {
+  async summarizeHistory(messages: readonly ChatMessage[]): Promise<string> {
     const response = await this.provider.chat(
       [
         { role: "system", content: SUMMARY_SYSTEM },
@@ -398,10 +409,14 @@ export class ContextCompactor {
    * 整个历史只保留这一条 + 当前请求，其余全部丢掉。
    * 在 prepare 里是最后手段，前面所有本地压缩都不管用时才轮到它（因为要花钱调模型）。
    */
-  async compactHistory(messages: ChatMessage[], activeRequest: string): Promise<ChatMessage[]> {
+  async compactHistory(messages: readonly ChatMessage[], activeRequest: string): Promise<PreparedContext> {
     const summary = await this.summarizeHistory(messages);
     this.tracer?.event("compact", { kind: "proactive", before_msgs: messages.length, after_msgs: 1 });
-    return [ContextCompactor.summaryMessage("已压缩", activeRequest, summary)];
+    const summaryMessage = ContextCompactor.summaryMessage("已压缩", activeRequest, summary);
+    return {
+      messages: [summaryMessage],
+      compaction: { summaryMessage, firstKeptIndex: null },
+    };
   }
 
   /**
@@ -412,9 +427,9 @@ export class ContextCompactor {
    * 同样要注意 tool 配对边界：保留的「最近 5 条」如果切点劈开了工具调用对，就整体挪一挪。
    */
   async reactiveCompact(
-    messages: ChatMessage[],
+    messages: readonly ChatMessage[],
     activeRequest: string,
-  ): Promise<ChatMessage[]> {
+  ): Promise<PreparedContext> {
     const fallback: ChatMessage = { role: "user", content: null };
     // 默认保留最近 5 条，tailStart 是「旧历史」和「保留的尾部」之间的分界点。
     let tailStart = Math.max(
@@ -442,7 +457,10 @@ export class ContextCompactor {
     // 摘要放最前，尾部最近几条原样保留。
     const result = tailStart ? [message, ...messages.slice(tailStart)] : [message];
     this.tracer?.event("compact", { kind: "reactive", before_msgs: messages.length, after_msgs: result.length });
-    return result;
+    return {
+      messages: result,
+      compaction: { summaryMessage: message, firstKeptIndex: tailStart || null },
+    };
   }
 
   /**
@@ -460,7 +478,7 @@ export class ContextCompactor {
    *     3b fitToolResults：还不够，连「未读的」也一起挪，留 1000 字预览；
    *     3c compactHistory：最后手段，调模型做整体摘要。
    */
-  async prepare(messages: ChatMessage[], activeRequest: string): Promise<ChatMessage[]> {
+  async prepare(messages: readonly ChatMessage[], activeRequest: string): Promise<PreparedContext> {
     // 第 1 步：末尾的工具结果太大就先挪磁盘（本地、不花钱）。
     let prepared = this.toolResultBudget(messages);
     // 第 2 步：消息条数太多就砍中间（本地、不花钱）。
@@ -478,9 +496,9 @@ export class ContextCompactor {
       if (ContextCompactor.estimateChars(prepared) > this.contextCharLimit) {
         // 3c：最后手段——调模型做整体摘要（最贵，放最后）。
         log.info("自动压缩");
-        prepared = await this.compactHistory(prepared, activeRequest);
+        return this.compactHistory(messages, activeRequest);
       }
     }
-    return prepared;
+    return { messages: prepared };
   }
 }

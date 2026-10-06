@@ -6,6 +6,7 @@ import type {
   ToolDefinition,
 } from "../contracts/types.js";
 import type { HookBus } from "./hooks.js";
+import type { SessionEvent, Transcript } from "../session/transcript.js";
 
 /**
  * 运行时端口（Port）定义。
@@ -25,13 +26,27 @@ export interface ToolRegistryPort {
 }
 
 /** 压缩端口：提供三种力度/时机不同的上下文压缩能力。 */
+export interface CompactionPlan {
+  /** 摘要消息本身。 */
+  summaryMessage: ChatMessage;
+  /** 输入 messages 数组（含 system）中第一条保留消息的下标；null 表示全量摘要。 */
+  firstKeptIndex: number | null;
+}
+
+export interface PreparedContext {
+  /** 本轮传给 provider 的上下文；可能包含不落盘的本地变换。 */
+  messages: ChatMessage[];
+  /** 只有语义压缩才设置；本地变换不设置。 */
+  compaction?: CompactionPlan;
+}
+
 export interface CompactionPort {
   /** 调模型前主动压缩：优先本地操作（挪工具结果、砍中间），实在压不下才做整体摘要。 */
-  prepare(messages: ChatMessage[], activeRequest: string): Promise<ChatMessage[]>;
+  prepare(messages: readonly ChatMessage[], activeRequest: string): Promise<PreparedContext>;
   /** 上下文超长被 API 拒绝后救急：保留最近几条，更早的历史总结成摘要。 */
-  reactiveCompact(messages: ChatMessage[], activeRequest: string): Promise<ChatMessage[]>;
+  reactiveCompact(messages: readonly ChatMessage[], activeRequest: string): Promise<PreparedContext>;
   /** 最狠的主动压缩：整段历史总结成一条摘要消息。 */
-  compactHistory(messages: ChatMessage[], activeRequest: string): Promise<ChatMessage[]>;
+  compactHistory(messages: readonly ChatMessage[], activeRequest: string): Promise<PreparedContext>;
 }
 
 /** 压缩器端口：在压缩能力之外，额外暴露「工具结果挪磁盘」的目标目录。 */
@@ -64,9 +79,9 @@ export interface JobsPort {
     restore(jobs: ScheduledJobPort[]): void;
   };
   /** 取出到期的定时任务并注入对话，返回这批任务。 */
-  consumeAndInjectCron(messages: ChatMessage[]): ScheduledJobPort[];
+  consumeAndInjectCron(transcript: Transcript): ScheduledJobPort[];
   /** 把跑完的后台任务结果注入对话，返回注入条数。 */
-  injectBackgroundResults(messages: ChatMessage[]): number;
+  injectBackgroundResults(transcript: Transcript): number;
   /** 启动一个后台命令，返回句柄。 */
   startBackground(command: string): string;
   /** 启动任务调度循环。 */
@@ -116,9 +131,9 @@ export interface MemoryPort {
   readonly dream: DreamPort;
   readonly store: { readonly directory: string };
   /** 生成注入系统提示词的「记忆背景」片段。 */
-  systemSection(messages: ChatMessage[]): Promise<string>;
+  systemSection(messages: readonly ChatMessage[]): Promise<string>;
   /** 从当前对话提取值得长期保存的记忆。 */
-  extract(messages: ChatMessage[]): Promise<boolean | number>;
+  extract(messages: readonly ChatMessage[]): Promise<boolean | number>;
   /** 合并整理已有记忆（去重、纠错）。 */
   consolidate(): Promise<boolean | number>;
 }
@@ -134,7 +149,7 @@ export interface GoalEvaluationPort {
   /** 开始一次查询（重置本轮查询状态）。 */
   beginQuery(): void;
   /** 一轮结束后评估目标，返回是否停止的决策。 */
-  evaluateAfterTurn(messages: ChatMessage[], backgroundRunning?: boolean): Promise<StopDecision>;
+  evaluateAfterTurn(messages: readonly ChatMessage[], backgroundRunning?: boolean): Promise<StopDecision>;
 }
 
 /** 目标端口：在评估能力之上，额外提供目标的设置、查询、清除。 */
@@ -147,13 +162,13 @@ export interface GoalPort extends GoalEvaluationPort {
 /** 会话留档端口：把消息追加落盘，供跨会话恢复。 */
 export interface SessionStorePort {
   readonly path: string;
-  append(message: ChatMessage): void;
+  appendEvent(event: SessionEvent): void;
 }
 
 /** 团队 agent 端口：接收队友回传的消息并注入对话，管理团队生命周期。 */
 export interface TeamAgentsPort {
   /** 取出队友回传结果注入对话，返回注入条数。 */
-  consumeAndInjectTeam(messages: ChatMessage[]): number;
+  consumeAndInjectTeam(transcript: Transcript): number;
   /** 注册团队轮次的回调（可选）。 */
   setTeamTurn?(callback: (signal: AbortSignal) => Promise<void>): void;
   start?(): void;

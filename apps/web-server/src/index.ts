@@ -112,7 +112,7 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
         async (signal) => {
           const handle = session.currentHandle;
           if (handle === undefined) return;
-          await harness.runDreamTurn!(handle.messages, signal);
+          await harness.runDreamTurn!(handle.transcript, signal);
         },
       );
       harness.jobs.start(); // web 场景此前从未 start，dream 与 cron 一并激活

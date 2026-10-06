@@ -1,6 +1,6 @@
 import * as path from "node:path";
 import { createLogger } from "@blh/logger";
-import type { ChatMessage, ChatProvider, Config } from "../contracts/types.js";
+import type { ChatProvider, Config } from "../contracts/types.js";
 import type { HookBus } from "../runtime/hooks.js";
 import type { AgentLock } from "../runtime/agent-lock.js";
 import type { Task, TaskStore } from "../planning/tasks.js";
@@ -10,6 +10,7 @@ import { TeammateRuntime } from "./teammate.js";
 import type { TeammateTeam } from "./teammate.js";
 import { createWorktree as createWorktreeOp, taskCwd as taskCwdOp } from "./worktree.js";
 import type { Tracer } from "../tracing/tracer.js";
+import type { Transcript } from "../session/transcript.js";
 
 const RESERVED_TEAMMATE_NAMES = new Set(["lead", "agent"]);
 
@@ -765,7 +766,7 @@ export class TeamRuntime implements TeammateTeam {
    *
    * 返回处理了多少条消息。
    */
-  consumeAndInjectTeam(messages: ChatMessage[]): number {
+  consumeAndInjectTeam(transcript: Transcript): number {
     const msgs = this.bus.readInbox("lead");
     for (const msg of msgs) {
       const requestId = msg.metadata["request_id"];
@@ -774,7 +775,7 @@ export class TeamRuntime implements TeammateTeam {
       }
     }
     if (msgs.length === 0) return 0;
-    messages.push({ role: "user", content: this.formatTeamEvents(msgs) });
+    transcript.append({ role: "user", content: this.formatTeamEvents(msgs) });
     return msgs.length;
   }
 

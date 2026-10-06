@@ -1,6 +1,6 @@
-import type { ChatMessage } from "../contracts/types.js";
 import type { BackgroundManager } from "./background.js";
 import type { CronJob, CronScheduler } from "./cron.js";
+import type { Transcript } from "../session/transcript.js";
 import { AgentLock } from "../runtime/agent-lock.js";
 import { createLogger } from "@blh/logger";
 
@@ -78,19 +78,19 @@ export class JobsRuntime {
   }
 
   /** 把已完成的后台任务结果作为 user 消息注入对话；返回注入条数。 */
-  injectBackgroundResults(messages: ChatMessage[]): number {
+  injectBackgroundResults(transcript: Transcript): number {
     const notifications = this.background.collect();
     for (const notification of notifications) {
-      messages.push({ role: "user", content: notification });
+      transcript.append({ role: "user", content: notification });
     }
     return notifications.length;
   }
 
   /** 取出到期的 cron 任务，逐个作为 `[Scheduled] ...` 的 user 消息注入对话；返回取出的任务列表。 */
-  consumeAndInjectCron(messages: ChatMessage[]): CronJob[] {
+  consumeAndInjectCron(transcript: Transcript): CronJob[] {
     const jobs = this.cron.consumeQueue();
     for (const job of jobs) {
-      messages.push({ role: "user", content: `[Scheduled] ${job.prompt}` });
+      transcript.append({ role: "user", content: `[Scheduled] ${job.prompt}` });
     }
     return jobs;
   }

@@ -1,11 +1,10 @@
 import readline from "node:readline";
-import type { ChatMessage } from "../contracts/types.js";
 import type { GoalCommand as ParsedGoalCommand } from "../contracts/goals.js";
 import type { TeamAgentsPort } from "../runtime/ports.js";
 import type { GoalPort, JobsPort } from "../runtime/ports.js";
 import { EventBus } from "../runtime/events.js";
 import type { AgentEvent } from "../contracts/events.js";
-import { lastAssistantText } from "../runtime/loop.js";
+import type { SessionEvent, Transcript } from "../session/transcript.js";
 import { setTerminalWriter } from "@blh/logger";
 
 /** /goal 命令的解析结果："status" 查看 / "clear" 清除 / "set" 设置 / null 不是 goal 命令。 */
@@ -13,14 +12,14 @@ type GoalCommand = ParsedGoalCommand | null;
 
 /** repl 依赖的最小会话能力：结构化类型，测试可注入 fake。 */
 export interface TurnRunner {
-  /** 新建一个只含 system 消息的会话。 */
-  newSession(): ChatMessage[];
+  /** 新建会话，或从既有事件重放出会话。 */
+  newTranscript(events?: readonly SessionEvent[]): Transcript;
   /** 跑一轮用户对话。 */
-  runTurn(messages: ChatMessage[], text: string, events?: EventBus): Promise<void>;
+  runTurn(transcript: Transcript, text: string, events?: EventBus): Promise<void>;
   /** 可选：跑一轮定时任务。 */
-  runScheduledTurn?(messages: ChatMessage[], signal?: AbortSignal): Promise<void>;
+  runScheduledTurn?(transcript: Transcript, signal?: AbortSignal): Promise<void>;
   /** 可选：跑一轮团队任务。 */
-  runTeamTurn?(messages: ChatMessage[], signal?: AbortSignal): Promise<void>;
+  runTeamTurn?(transcript: Transcript, signal?: AbortSignal): Promise<void>;
   /** 可选：后台任务运行时。 */
   jobs?: JobsPort | undefined;
   /** 可选：团队运行时。 */
@@ -32,7 +31,7 @@ export interface TurnRunner {
   /** 可选：dream 是否到期。 */
   isDreamDue?(): Promise<boolean>;
   /** 可选：跑一轮 autodream（记忆深度整理）。 */
-  runDreamTurn?(messages: ChatMessage[], signal?: AbortSignal): Promise<void>;
+  runDreamTurn?(transcript: Transcript, signal?: AbortSignal): Promise<void>;
 }
 
 /** 命令行输入输出接口（repl 用它和终端交互，不直接碰 readline）。 */
@@ -154,12 +153,12 @@ export function makeReadlineIO(rl?: readline.Interface): ReplIO {
 export async function repl(
   agent: TurnRunner,
   io: ReplIO,
-  initialMessages?: ChatMessage[],
+  initialTranscript?: Transcript,
 ): Promise<void> {
   // 打印欢迎语。
   io.print("blh — type 'exit' to quit");
   // 用传入的会话继续，没传就新建一个。
-  const messages = initialMessages ?? agent.newSession();
+  const transcript = initialTranscript ?? agent.newTranscript();
   // 取出各可选依赖（这些在非完整 harness 的场景下可能是 undefined）。
   const jobs = agent.jobs;
   const runScheduledTurn = agent.runScheduledTurn?.bind(agent);
@@ -173,9 +172,9 @@ export async function repl(
     // 接上定时任务：注册一个回调，定时器触发时跑一轮定时任务，再把本轮新增的回复打印出来。
     if (jobs !== undefined && runScheduledTurn !== undefined) {
       jobs.setCronTurn(async (signal) => {
-        const before = messages.length;
-        await runScheduledTurn(messages, signal);
-        const reply = lastAssistantText(messages, before);
+        const before = transcript.lastSeq;
+        await runScheduledTurn(transcript, signal);
+        const reply = transcript.lastAssistantTextAfter(before);
         if (reply) io.print(reply);
       });
       // 启动定时调度。
@@ -184,18 +183,18 @@ export async function repl(
     // 接上 autodream：到期时跑一轮记忆深度整理，打印新增回复。
     if (jobs !== undefined && isDreamDue !== undefined && runDreamTurn !== undefined) {
       jobs.setDreamTurn(isDreamDue, async (signal) => {
-        const before = messages.length;
-        await runDreamTurn(messages, signal);
-        const reply = lastAssistantText(messages, before);
+        const before = transcript.lastSeq;
+        await runDreamTurn(transcript, signal);
+        const reply = transcript.lastAssistantTextAfter(before);
         if (reply) io.print(reply);
       });
     }
     // 接上团队任务：注册一个回调，队友消息到达时跑一轮团队任务，同样打印新增回复。
     if (agents !== undefined && runTeamTurn !== undefined) {
       agents.setTeamTurn?.(async (signal) => {
-        const before = messages.length;
-        await runTeamTurn(messages, signal);
-        const reply = lastAssistantText(messages, before);
+        const before = transcript.lastSeq;
+        await runTeamTurn(transcript, signal);
+        const reply = transcript.lastAssistantTextAfter(before);
         if (reply) io.print(reply);
       });
       agents.start?.();
@@ -237,7 +236,7 @@ export async function repl(
         // 一轮对话的执行体：跑 agent，并把流式事件渲染到终端。
         const run = async () => {
           // 记录本轮开始前的消息数，用于最后只取「本轮新增」的回复。
-          const turnStart = messages.length;
+          const turnStart = transcript.lastSeq;
           // 每轮新建一个事件总线，收集本轮产生的流式事件。
           const events = new EventBus();
           // 是否正在输出一段连续文本（跨事件复用）。
@@ -249,13 +248,13 @@ export async function repl(
             renderStreamEvent(io, event, state);
           });
           try {
-            await agent.runTurn(messages, text, events);
+            await agent.runTurn(transcript, text, events);
           } finally {
             // 无论成功失败，都取消订阅，避免泄漏。
             off();
           }
           // 如果没有走流式输出（比如没收到任何文本增量事件），就直接打印最后一条回复兜底。
-          if (!streamed) io.print(lastAssistantText(messages, turnStart));
+          if (!streamed) io.print(transcript.lastAssistantTextAfter(turnStart));
         };
         // 有后台任务运行时，用锁串行执行本轮，避免和定时/团队任务并发冲突。
         if (jobs !== undefined) {

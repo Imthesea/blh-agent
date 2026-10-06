@@ -8,18 +8,18 @@ import type { WebContext } from "../src/http/context.js";
 import { SSEBroadcaster } from "../src/bridge.js";
 import { SessionManager } from "../src/session.js";
 import { ApprovalCoordinator } from "../src/approval.js";
-import type { TurnLock, WebTurnRunner } from "../src/types.js";
+import type { ChatMessage, TranscriptLike, TurnLock, WebTurnRunner } from "../src/types.js";
 import type { Server } from "node:http";
-import { makeTestSessionStore } from "./helpers.js";
+import { makeTestSessionStore, makeTranscript } from "./helpers.js";
 
 async function makeContext(workdir: string): Promise<WebContext> {
   const broadcaster = new SSEBroadcaster();
   const approvals = new ApprovalCoordinator((event) => broadcaster.broadcast(event));
   const runner: WebTurnRunner = {
-    newSession: () => [{ role: "system", content: "sys" }],
-    runTurn: async (messages, text) => {
-      messages.push({ role: "user", content: text });
-      messages.push({ role: "assistant", content: `reply:${text}` });
+    newTranscript: (events) => makeTranscript(events),
+    runTurn: async (transcript: TranscriptLike, text) => {
+      (transcript.messages as ChatMessage[]).push({ role: "user", content: text });
+      (transcript.messages as ChatMessage[]).push({ role: "assistant", content: `reply:${text}` });
     },
   };
   const lock: TurnLock = { withLock: async <T,>(fn: () => Promise<T>) => fn() };
@@ -122,7 +122,7 @@ describe("http 路由", () => {
 
   it("GET /api/sessions 返回列表", async () => {
     const context = await makeContext(tmpDir);
-    context.sessionStore.load = () => {
+    context.sessionStore.loadMessages = () => {
       throw new Error("session list must not load the full transcript");
     };
     const sessionsDir = path.join(tmpDir, ".sessions");

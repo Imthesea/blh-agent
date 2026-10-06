@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { agentLoop, lastAssistantText, parseToolArguments, runAgentLoop } from "../../src/runtime/loop.js";
+import { agentLoop, parseToolArguments, runAgentLoop } from "../../src/runtime/loop.js";
 import { Harness } from "../../src/runtime/harness.js";
 import type { TeamAgentsPort } from "../../src/runtime/ports.js";
 import { ToolRegistry } from "../../src/tools/registry.js";
@@ -21,6 +21,7 @@ import { CronScheduler } from "../../src/jobs/cron.js";
 import { JobsRuntime } from "../../src/jobs/runtime.js";
 import { GoalController } from "../../src/goals/controller.js";
 import { SessionStore } from "../../src/session/store.js";
+import { Transcript } from "../../src/session/transcript.js";
 import type { GoalEvaluator } from "../../src/goals/evaluator.js";
 import type { GoalEvaluation } from "../../src/goals/types.js";
 import { Tracer, localDate } from "../../src/tracing/tracer.js";
@@ -90,16 +91,16 @@ describe("agentLoop", () => {
       makeToolCallMessage("echo", { text: "hi" }),
       makeTextMessage("done"),
     ]);
-    const messages: ChatMessage[] = [{ role: "user", content: "go" }];
-    await agentLoop(harness, messages);
+    const transcript = new Transcript(); transcript.append({ role: "user", content: "go" });
+    await agentLoop(harness, transcript);
     // user + assistant(tool_call) + tool result + assistant(text)
-    expect(messages).toHaveLength(4);
-    expect(messages[2]).toEqual({
+    expect(transcript.messages).toHaveLength(4);
+    expect(transcript.messages[2]).toEqual({
       role: "tool",
       tool_call_id: "call_1",
       content: "echoed:hi",
     });
-    expect(lastAssistantText(messages)).toBe("done");
+    expect(transcript.lastAssistantTextAfter(0)).toBe("done");
   });
 
   it("blocked by PreToolUse hook: appends blocked text, skips dispatch and post hook", async () => {
@@ -116,10 +117,10 @@ describe("agentLoop", () => {
       dispatched += 1;
       return originalDispatch(name, args);
     };
-    const messages: ChatMessage[] = [{ role: "user", content: "go" }];
-    await agentLoop(harness, messages);
+    const transcript = new Transcript(); transcript.append({ role: "user", content: "go" });
+    await agentLoop(harness, transcript);
     expect(dispatched).toBe(0);
-    expect(messages[2]).toEqual({
+    expect(transcript.messages[2]).toEqual({
       role: "tool",
       tool_call_id: "call_1",
       content: "denied by user",
@@ -135,8 +136,8 @@ describe("agentLoop", () => {
     const bus = new EventBus();
     bus.subscribe((e) => events.push(e));
     const controller = new AbortController();
-    const messages = harness.newSession();
-    const run = harness.runTurn(messages, "go", bus, controller.signal);
+    const transcript = harness.newTranscript();
+    const run = harness.runTurn(transcript, "go", bus, controller.signal);
     await new Promise((r) => setTimeout(r, 10));
     controller.abort();
     await run;
@@ -144,10 +145,10 @@ describe("agentLoop", () => {
     expect(events.map((e) => e.type)).toContain("turn_cancelled");
     const cancelled = events.find((e) => e.type === "turn_cancelled");
     expect((cancelled as { text: string }).text).toBe("你好，我是");
-    const last = messages[messages.length - 1]!;
+    const last = transcript.messages.at(-1)!;
     expect(last.cancelled).toBe(true);
     expect(last.content).toBe("你好，我是");
-    expect(SessionStore.load(harness.sessionStore!.path).some((m) => m.cancelled === true)).toBe(true);
+    expect(SessionStore.loadMessages(harness.sessionStore!.path).some((m) => m.cancelled === true)).toBe(true);
   });
 
   it("工具执行后被中断：广播 turn_cancelled 且不再继续循环", async () => {
@@ -174,8 +175,8 @@ describe("agentLoop", () => {
     const bus = new EventBus();
     bus.subscribe((e) => events.push(e));
     const controller = new AbortController();
-    const messages = harness.newSession();
-    const run = harness.runTurn(messages, "go", bus, controller.signal);
+    const transcript = harness.newTranscript();
+    const run = harness.runTurn(transcript, "go", bus, controller.signal);
     const deadline = Date.now() + 1000;
     while (!events.some((e) => e.type === "tool_call") && Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 5));
@@ -185,8 +186,8 @@ describe("agentLoop", () => {
 
     expect(abortSeen).toBe(true);
     expect(events.map((e) => e.type)).toContain("turn_cancelled");
-    expect(lastAssistantText(messages)).not.toBe("should not appear");
-    const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
+    expect(transcript.lastAssistantTextAfter(0)).not.toBe("should not appear");
+    const lastAssistant = [...transcript.messages].reverse().find((m) => m.role === "assistant");
     expect(lastAssistant?.cancelled).toBe(true);
   });
 });
@@ -209,14 +210,14 @@ describe("agentLoop goal stop hook", () => {
     goal.setGoal("finish");
     const provider = new MockProvider([makeTextMessage("try1"), makeTextMessage("done")]);
     const harness = makeHarness([], { provider, goal });
-    const messages = harness.newSession();
-    await harness.runTurn(messages, "go");
+    const transcript = harness.newTranscript();
+    await harness.runTurn(transcript, "go");
     expect(
-      messages.some(
+      transcript.messages.some(
         (m) => m.role === "user" && (m.content ?? "").includes("[Goal still active]"),
       ),
     ).toBe(true);
-    expect(lastAssistantText(messages)).toBe("done");
+    expect(transcript.lastAssistantTextAfter(0)).toBe("done");
   });
 
   it("achieved 返回", async () => {
@@ -225,12 +226,12 @@ describe("agentLoop goal stop hook", () => {
     );
     goal.setGoal("finish");
     const harness = makeHarness([makeTextMessage("done")], { goal });
-    const messages = harness.newSession();
-    await harness.runTurn(messages, "go");
-    expect(lastAssistantText(messages)).toBe("done");
+    const transcript = harness.newTranscript();
+    await harness.runTurn(transcript, "go");
+    expect(transcript.lastAssistantTextAfter(0)).toBe("done");
     expect(goal.active).toBeNull();
     expect(
-      messages.some((m) => (m.content ?? "").includes("[Goal still active]")),
+      transcript.messages.some((m) => (m.content ?? "").includes("[Goal still active]")),
     ).toBe(false);
   });
   it("新的用户回合重置 Stop hook 连续 block 计数", async () => {
@@ -252,27 +253,13 @@ describe("agentLoop goal stop hook", () => {
       makeTextMessage("try4"),
     ]);
     const harness = makeHarness([], { provider, goal });
-    const messages = harness.newSession();
-    await harness.runTurn(messages, "first");
-    await harness.runTurn(messages, "second");
-    const reminders = messages.filter(
+    const transcript = harness.newTranscript();
+    await harness.runTurn(transcript, "first");
+    await harness.runTurn(transcript, "second");
+    const reminders = transcript.messages.filter(
       (message) => message.role === "user" && (message.content ?? "").includes("[Goal still active]"),
     );
     expect(reminders).toHaveLength(2);
-  });
-});
-
-describe("lastAssistantText", () => {
-  it("finds last non-empty assistant content", () => {
-    const messages: ChatMessage[] = [
-      { role: "assistant", content: "first" },
-      { role: "user", content: "x" },
-      { role: "assistant", content: "second" },
-    ];
-    expect(lastAssistantText(messages)).toBe("second");
-  });
-  it("returns empty string when none", () => {
-    expect(lastAssistantText([{ role: "user", content: "x" }])).toBe("");
   });
 });
 
@@ -320,11 +307,11 @@ describe("agentLoop 压缩集成", () => {
     let seenRequest = "";
     compactor.prepare = async (messages, request) => {
       seenRequest = request;
-      return messages;
+      return { messages: [...messages] };
     };
     const harness = makeHarness([makeTextMessage("done")], { compactor });
-    const messages = harness.newSession();
-    await harness.runTurn(messages, "fix the bug");
+    const transcript = harness.newTranscript();
+    await harness.runTurn(transcript, "fix the bug");
     expect(seenRequest).toBe("fix the bug");
   });
 
@@ -337,12 +324,12 @@ describe("agentLoop 压缩集成", () => {
     // compactor 与 harness 共享同一 provider：摘要调用消耗同一脚本
     const compactor = makeCompactor(tmpDir, provider);
     const harness = makeHarness([], { compactor, provider });
-    const messages = harness.newSession();
-    await harness.runTurn(messages, "hi");
+    const transcript = harness.newTranscript();
+    await harness.runTurn(transcript, "hi");
     expect(provider.calls).toBe(3);
-    expect(lastAssistantText(messages)).toBe("recovered");
-    expect(messages[0]?.role).toBe("system");
-    expect(messages[1]?.content?.startsWith("[响应式压缩]")).toBe(true);
+    expect(transcript.lastAssistantTextAfter(0)).toBe("recovered");
+    expect(transcript.messages[0]?.role).toBe("system");
+    expect(transcript.messages[1]?.content?.startsWith("[响应式压缩]")).toBe(true);
   });
 
   it("重试耗尽后原样抛出", async () => {
@@ -353,7 +340,7 @@ describe("agentLoop 压缩集成", () => {
     ]);
     const compactor = makeCompactor(tmpDir, provider);
     const harness = makeHarness([], { compactor, provider });
-    await expect(harness.runTurn(harness.newSession(), "hi")).rejects.toBeInstanceOf(
+    await expect(harness.runTurn(harness.newTranscript(), "hi")).rejects.toBeInstanceOf(
       FakePromptTooLong,
     );
     expect(provider.calls).toBe(3);
@@ -363,7 +350,7 @@ describe("agentLoop 压缩集成", () => {
     const provider = new FlakyProvider([new Error("boom")]);
     const compactor = makeCompactor(tmpDir);
     const harness = makeHarness([], { compactor, provider });
-    await expect(harness.runTurn(harness.newSession(), "hi")).rejects.toThrow("boom");
+    await expect(harness.runTurn(harness.newTranscript(), "hi")).rejects.toThrow("boom");
     expect(provider.calls).toBe(1);
   });
 
@@ -375,10 +362,10 @@ describe("agentLoop 压缩集成", () => {
     const compactor = makeCompactor(tmpDir, provider);
     compactor.contextCharLimit = 10; // 极小阈值，纯文本经 micro/fit 无法削减，必然走 compactHistory
     const harness = makeHarness([], { compactor, provider });
-    const messages = harness.newSession();
-    await harness.runTurn(messages, "a".repeat(1000));
-    expect(messages[0]?.role).toBe("system");
-    expect(messages[1]?.content?.startsWith("[已压缩]")).toBe(true);
+    const transcript = harness.newTranscript();
+    await harness.runTurn(transcript, "a".repeat(1000));
+    expect(transcript.messages[0]?.role).toBe("system");
+    expect(transcript.messages[1]?.content?.startsWith("[已压缩]")).toBe(true);
   });
 
   it("compact 工具在批次闭合后压缩", async () => {
@@ -413,18 +400,18 @@ describe("agentLoop 压缩集成", () => {
     ]);
     const compactor = makeCompactor(tmpDir, provider);
     const harness = makeHarness([], { tools, compactor, provider });
-    const messages = harness.newSession();
-    await harness.runTurn(messages, "note then compact");
+    const transcript = harness.newTranscript();
+    await harness.runTurn(transcript, "note then compact");
     // 同批 write_note 的副作用在压缩前完成，不丢失
     expect(sideEffects).toEqual(["hello"]);
-    expect(messages).toHaveLength(3); // system + [Compacted] 摘要 + 最终答复
-    expect(messages[0]?.role).toBe("system");
-    expect(messages[1]?.content?.startsWith("[已压缩]")).toBe(true);
-    expect(messages[1]?.content).toContain(
+    expect(transcript.messages).toHaveLength(3); // system + [Compacted] 摘要 + 最终答复
+    expect(transcript.messages[0]?.role).toBe("system");
+    expect(transcript.messages[1]?.content?.startsWith("[已压缩]")).toBe(true);
+    expect(transcript.messages[1]?.content).toContain(
       "当前用户请求：\nnote then compact",
     );
-    expect(messages[1]?.content).toContain("conversation summary");
-    expect(messages[1]?.content).not.toContain("Full transcript:");
+    expect(transcript.messages[1]?.content).toContain("conversation summary");
+    expect(transcript.messages[1]?.content).not.toContain("Full transcript:");
     expect(existsSync(path.join(tmpDir, ".transcripts"))).toBe(false);
   });
 
@@ -440,9 +427,9 @@ describe("agentLoop 压缩集成", () => {
       makeTextMessage("done"),
     ]);
     harness.sessionStore = store;
-    const messages = harness.newSession();
-    await harness.runTurn(messages, "go");
-    expect(SessionStore.load(store.path).map((m) => m.role)).toEqual([
+    const transcript = harness.newTranscript();
+    await harness.runTurn(transcript, "go");
+    expect(SessionStore.loadMessages(store.path).map((m) => m.role)).toEqual([
       "user",
       "assistant",
       "tool",
@@ -455,11 +442,11 @@ describe("agentLoop 压缩集成", () => {
     const compactor = makeCompactor(tmpDir);
     const harness = makeHarness([makeTextMessage("done")], { compactor });
     harness.sessionStore = store;
-    const messages = harness.newSession();
-    for (let i = 0; i < 51; i++) messages.push({ role: "user", content: `m${i}` });
-    const before = SessionStore.load(store.path).length;
-    await harness.runTurn(messages, "trigger");
-    const after = SessionStore.load(store.path).length;
+    const transcript = harness.newTranscript();
+    for (let i = 0; i < 51; i++) transcript.append({ role: "user", content: `m${i}` });
+    const before = SessionStore.loadMessages(store.path).length;
+    await harness.runTurn(transcript, "trigger");
+    const after = SessionStore.loadMessages(store.path).length;
     expect(after - before).toBe(2);
   });
 });
@@ -473,14 +460,14 @@ describe("agentLoop planning 集成", () => {
       script.push(makeTextMessage("done"));
     }
     const harness = makeHarness(script, { todoManager });
-    const messages = harness.newSession();
+    const transcript = harness.newTranscript();
     for (let i = 0; i < 3; i++) {
-      await harness.runTurn(messages, "go");
+      await harness.runTurn(transcript, "go");
     }
-    const toolResults = messages.filter((m) => m.role === "tool");
-    expect(
-      toolResults.some((m) => (m.content ?? "").includes("<reminder>Update your todos.</reminder>")),
-    ).toBe(true);
+    const reminders = transcript.messages.filter(
+      (m) => m.role === "user" && (m.content ?? "").includes("<reminder>Update your todos.</reminder>"),
+    );
+    expect(reminders.length).toBeGreaterThan(0);
   });
 
   it("使用 todo_write 时重置计数不提醒", async () => {
@@ -503,12 +490,14 @@ describe("agentLoop planning 集成", () => {
       script.push(makeTextMessage("done"));
     }
     const harness = makeHarness(script, { tools: [todoWriteTool], todoManager });
-    const messages = harness.newSession();
+    const transcript = harness.newTranscript();
     for (let i = 0; i < 2; i++) {
-      await harness.runTurn(messages, "go");
+      await harness.runTurn(transcript, "go");
     }
-    const toolResults = messages.filter((m) => m.role === "tool");
-    expect(toolResults.some((m) => (m.content ?? "").includes("<reminder>"))).toBe(false);
+    const reminders = transcript.messages.filter(
+      (m) => m.role === "user" && (m.content ?? "").includes("<reminder>"),
+    );
+    expect(reminders).toHaveLength(0);
   });
 });
 
@@ -533,11 +522,11 @@ describe("runTurn memory 集成", () => {
     ]);
     const memory = new Memory(store, provider);
     const harness = makeHarness([], { memory, provider });
-    const messages = harness.newSession();
-    await harness.runTurn(messages, "what indent style do I prefer");
-    expect(messages[0]?.content).toContain("相关记忆记录：");
-    expect(messages[0]?.content).toContain("Tabs not spaces.");
-    expect(lastAssistantText(messages)).toBe("done");
+    const transcript = harness.newTranscript();
+    await harness.runTurn(transcript, "what indent style do I prefer");
+    expect(transcript.messages[0]?.content).toContain("相关记忆记录：");
+    expect(transcript.messages[0]?.content).toContain("Tabs not spaces.");
+    expect(transcript.lastAssistantTextAfter(0)).toBe("done");
   });
 
   it("runTurn extracts memories", async () => {
@@ -553,8 +542,8 @@ describe("runTurn memory 集成", () => {
     ]);
     const memory = new Memory(store, provider);
     const harness = makeHarness([], { memory, provider });
-    const messages = harness.newSession();
-    await harness.runTurn(messages, "I prefer tabs");
+    const transcript = harness.newTranscript();
+    await harness.runTurn(transcript, "I prefer tabs");
     expect(store.readMemoryFile("pref.md")).not.toBeNull();
   });
 
@@ -578,7 +567,7 @@ describe("runTurn memory 集成", () => {
     const harness = makeHarness([makeTextMessage("done")], {
       memory: memory as unknown as Memory,
     });
-    await harness.runTurn(harness.newSession(), "hi");
+    await harness.runTurn(harness.newTranscript(), "hi");
     expect(memory.extracted).not.toBeNull();
     expect(memory.consolidated).toBe(true);
   });
@@ -635,9 +624,9 @@ describe("agentLoop jobs 集成", () => {
       ],
       { tools: [bashTool], jobs },
     );
-    const messages = harness.newSession();
-    await harness.runTurn(messages, "go");
-    const toolResults = messages.filter((m) => m.role === "tool");
+    const transcript = harness.newTranscript();
+    await harness.runTurn(transcript, "go");
+    const toolResults = transcript.messages.filter((m) => m.role === "tool");
     expect(toolResults[0]?.content).toContain("Background task bg_");
   });
 
@@ -649,9 +638,9 @@ describe("agentLoop jobs 集成", () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
     const harness = makeHarness([makeTextMessage("done")], { jobs });
-    const messages = harness.newSession();
-    await harness.runTurn(messages, "continue");
-    const userMessages = messages.filter((m) => m.role === "user");
+    const transcript = harness.newTranscript();
+    await harness.runTurn(transcript, "continue");
+    const userMessages = transcript.messages.filter((m) => m.role === "user");
     expect(
       userMessages.some((m) => (m.content ?? "").includes("<task_notification>")),
     ).toBe(true);
@@ -679,9 +668,9 @@ describe("agentLoop jobs 集成", () => {
       ],
       { tools: [bashTool], jobs },
     );
-    const messages = harness.newSession();
-    await harness.runTurn(messages, "go");
-    const toolResults = messages.filter((m) => m.role === "tool");
+    const transcript = harness.newTranscript();
+    await harness.runTurn(transcript, "go");
+    const toolResults = transcript.messages.filter((m) => m.role === "tool");
     expect(toolResults[0]?.content).toContain("error: Bash command cannot be empty");
   });
 });
@@ -690,26 +679,26 @@ describe("runTeamTurn", () => {
   it("injects team events and loops", async () => {
     let consumed = 0;
     const agents: TeamAgentsPort = {
-      consumeAndInjectTeam(messages: ChatMessage[]): number {
+      consumeAndInjectTeam(transcript: Transcript): number {
         consumed += 1;
         if (consumed === 1) {
-          messages.push({ role: "user", content: "[Team events]\nbob: done" });
+          transcript.append({ role: "user", content: "[Team events]\nbob: done" });
           return 1;
         }
         return 0;
       },
     };
     const harness = makeHarness([makeTextMessage("acknowledged")], { agents });
-    const messages = harness.newSession();
-    await harness.runTeamTurn(messages);
+    const transcript = harness.newTranscript();
+    await harness.runTeamTurn(transcript);
     expect(consumed).toBe(1);
-    expect(lastAssistantText(messages)).toBe("acknowledged");
+    expect(transcript.lastAssistantTextAfter(0)).toBe("acknowledged");
   });
 
   it("passes an abort signal through the team turn", async () => {
     const agents: TeamAgentsPort = {
-      consumeAndInjectTeam(messages: ChatMessage[]): number {
-        messages.push({ role: "user", content: "[Team events]\nbob: done" });
+      consumeAndInjectTeam(transcript: Transcript): number {
+        transcript.append({ role: "user", content: "[Team events]\nbob: done" });
         return 1;
       },
     };
@@ -725,13 +714,13 @@ describe("runTeamTurn", () => {
     };
     const harness = makeHarness([], { agents, provider });
     const controller = new AbortController();
-    const messages = harness.newSession();
-    const run = harness.runTeamTurn(messages, controller.signal);
+    const transcript = harness.newTranscript();
+    const run = harness.runTeamTurn(transcript, controller.signal);
 
     await new Promise((resolve) => setTimeout(resolve, 10));
     controller.abort();
     await run;
-    expect(messages.some((message) => message.role === "assistant" && message.cancelled)).toBe(
+    expect(transcript.messages.some((message) => message.role === "assistant" && message.cancelled)).toBe(
       true,
     );
   });
@@ -755,9 +744,9 @@ describe("runTeamTurn", () => {
       [makeToolCallMessage("task", { prompt: "explore" }), makeTextMessage("done")],
       { tools: [taskTool] },
     );
-    const messages = harness.newSession();
-    await harness.runTurn(messages, "go");
-    const toolResults = messages.filter((m) => m.role === "tool");
+    const transcript = harness.newTranscript();
+    await harness.runTurn(transcript, "go");
+    const toolResults = transcript.messages.filter((m) => m.role === "tool");
     expect(toolResults[0]?.content).toBe("sub-result");
     expect(seen).toEqual(["explore"]);
   });
@@ -783,9 +772,9 @@ describe("runScheduledTurn", () => {
 
   it("no-ops when jobs is undefined", async () => {
     const harness = makeHarness([makeTextMessage("done")]);
-    const messages = harness.newSession();
-    await harness.runScheduledTurn(messages);
-    expect(messages).toHaveLength(1);
+    const transcript = harness.newTranscript();
+    await harness.runScheduledTurn(transcript);
+    expect(transcript.messages).toHaveLength(1);
   });
 
   it("consumes due cron, runs the loop, and acknowledges", async () => {
@@ -793,10 +782,10 @@ describe("runScheduledTurn", () => {
     const job = jobs.cron.schedule("* * * * *", "run tests");
     jobs.cron.pollDue(new Date(2026, 8, 14, 10, 30));
     const harness = makeHarness([makeTextMessage("done")], { jobs });
-    const messages = harness.newSession();
-    await harness.runScheduledTurn(messages);
+    const transcript = harness.newTranscript();
+    await harness.runScheduledTurn(transcript);
     expect(
-      messages.some(
+      transcript.messages.some(
         (m) => m.role === "user" && (m.content ?? "").includes("[Scheduled] run tests"),
       ),
     ).toBe(true);
@@ -809,10 +798,10 @@ describe("runScheduledTurn", () => {
     jobs.cron.pollDue(new Date(2026, 8, 14, 10, 30));
     const provider = new FlakyProvider([new Error("boom")]);
     const harness = makeHarness([], { jobs, provider });
-    const messages = harness.newSession();
-    await expect(harness.runScheduledTurn(messages)).rejects.toThrow("boom");
+    const transcript = harness.newTranscript();
+    await expect(harness.runScheduledTurn(transcript)).rejects.toThrow("boom");
     expect(
-      messages.some((m) => (m.content ?? "").includes("[Scheduled]")),
+      transcript.messages.some((m) => (m.content ?? "").includes("[Scheduled]")),
     ).toBe(false);
     expect(jobs.cron.hasQueue()).toBe(true);
   });
@@ -822,12 +811,12 @@ describe("runScheduledTurn", () => {
     const job = jobs.cron.schedule("* * * * *", "run tests");
     jobs.cron.pollDue(new Date(2026, 8, 14, 10, 30));
     const harness = makeHarness([makeTextMessage("done")], { jobs });
-    const messages = harness.newSession();
+    const transcript = harness.newTranscript();
     const controller = new AbortController();
     controller.abort();
-    await harness.runScheduledTurn(messages, controller.signal);
+    await harness.runScheduledTurn(transcript, controller.signal);
     expect(
-      messages.some((m) => (m.content ?? "").includes("[Scheduled]")),
+      transcript.messages.some((m) => (m.content ?? "").includes("[Scheduled]")),
     ).toBe(false);
     expect(jobs.cron.hasQueue()).toBe(true);
     expect(job.pending_delivery).toBe(true);
@@ -912,8 +901,8 @@ describe("agentLoop streaming events", () => {
     bus.subscribe((e) => {
       events.push(e);
     });
-    const messages = harness.newSession();
-    await harness.runTurn(messages, "go", bus);
+    const transcript = harness.newTranscript();
+    await harness.runTurn(transcript, "go", bus);
     expect(events.map((e) => e.type)).toEqual([
       "turn_start",
       "tool_call",
@@ -936,7 +925,7 @@ describe("agentLoop streaming events", () => {
       output: "echoed:hi",
       isError: false,
     });
-    expect(lastAssistantText(messages)).toBe("done");
+    expect(transcript.lastAssistantTextAfter(0)).toBe("done");
   });
 
   it("marks denied results as error", async () => {
@@ -956,8 +945,8 @@ describe("agentLoop streaming events", () => {
     bus.subscribe((e) => {
       events.push(e);
     });
-    const messages = harness.newSession();
-    await harness.runTurn(messages, "go", bus);
+    const transcript = harness.newTranscript();
+    await harness.runTurn(transcript, "go", bus);
     const toolResult = events.find((e) => e.type === "tool_result");
     expect(toolResult).toEqual({
       type: "tool_result",
@@ -979,15 +968,15 @@ describe("agentLoop streaming events", () => {
     bus.subscribe((e) => {
       events.push(e);
     });
-    const messages = harness.newSession();
-    await harness.runTurn(messages, "go", bus);
+    const transcript = harness.newTranscript();
+    await harness.runTurn(transcript, "go", bus);
     expect(events.map((e) => e.type)).toEqual([
       "turn_start",
       "tool_call",
       "tool_result",
       "turn_end",
     ]);
-    expect(lastAssistantText(messages)).toBe("done");
+    expect(transcript.lastAssistantTextAfter(0)).toBe("done");
   });
 
   it("falls back to chat when streaming fails", async () => {
@@ -1001,15 +990,15 @@ describe("agentLoop streaming events", () => {
     bus.subscribe((e) => {
       events.push(e);
     });
-    const messages = harness.newSession();
-    await harness.runTurn(messages, "go", bus);
+    const transcript = harness.newTranscript();
+    await harness.runTurn(transcript, "go", bus);
     expect(events.map((e) => e.type)).toEqual([
       "turn_start",
       "tool_call",
       "tool_result",
       "turn_end",
     ]);
-    expect(lastAssistantText(messages)).toBe("done");
+    expect(transcript.lastAssistantTextAfter(0)).toBe("done");
   });
   it("流式失败前已有输出时，回退后补发未展示的后缀", async () => {
     const provider = new PartialFailingStreamProvider("Hello world");
@@ -1017,15 +1006,15 @@ describe("agentLoop streaming events", () => {
     const events: AgentEvent[] = [];
     const bus = new EventBus();
     bus.subscribe((event) => events.push(event));
-    const messages = harness.newSession();
-    await harness.runTurn(messages, "go", bus);
+    const transcript = harness.newTranscript();
+    await harness.runTurn(transcript, "go", bus);
 
     const deltas = events.filter((event) => event.type === "assistant_text_delta");
     expect(deltas).toEqual([
       { type: "assistant_text_delta", text: "Hel" },
       { type: "assistant_text_delta", text: "lo world" },
     ]);
-    expect(lastAssistantText(messages)).toBe("Hello world");
+    expect(transcript.lastAssistantTextAfter(0)).toBe("Hello world");
   });
 });
 
@@ -1058,8 +1047,8 @@ describe("agentLoop tracing", () => {
       [makeToolCallMessage("echo", { text: "hi" }), makeTextMessage("done")],
       { tracer },
     );
-    const messages: ChatMessage[] = [{ role: "user", content: "go" }];
-    await agentLoop(harness, messages, "go");
+    const transcript = new Transcript(); transcript.append({ role: "user", content: "go" });
+    await agentLoop(harness, transcript, "go");
 
     const events = readTrace(dir);
     expect(events.map((e) => e["type"])).toEqual(["turn_start", "llm", "tool", "llm", "turn_end"]);
@@ -1088,8 +1077,8 @@ describe("agentLoop tracing", () => {
     );
     goal.setGoal("finish");
     const harness = makeHarness([makeTextMessage("try1"), makeTextMessage("done")], { goal, tracer });
-    const messages = harness.newSession();
-    await harness.runTurn(messages, "go");
+    const transcript = harness.newTranscript();
+    await harness.runTurn(transcript, "go");
 
     const goalEvents = readTrace(dir).filter((e) => e["type"] === "goal");
     expect(goalEvents.length).toBe(2);
@@ -1107,9 +1096,9 @@ describe("agentLoop tracing", () => {
     const events: AgentEvent[] = [];
     const bus = new EventBus();
     bus.subscribe((event) => events.push(event));
-    const messages: ChatMessage[] = [{ role: "user", content: "go" }];
+    const transcript = new Transcript(); transcript.append({ role: "user", content: "go" });
 
-    const result = await runAgentLoop(harness, messages, "go", bus, undefined, {
+    const result = await runAgentLoop(harness, transcript, "go", bus, undefined, {
       maxTurns: 1,
     });
 
@@ -1128,9 +1117,9 @@ describe("agentLoop tracing", () => {
     };
     const harness = makeHarness([], { provider, tracer });
 
-    await expect(runAgentLoop(harness, [{ role: "user", content: "go" }], "go")).rejects.toThrow(
-      "boom",
-    );
+    const transcript = new Transcript();
+    transcript.append({ role: "user", content: "go" });
+    await expect(runAgentLoop(harness, transcript, "go")).rejects.toThrow("boom");
 
     expect(readTrace(dir).at(-1)).toMatchObject({
       type: "turn_cancelled",
@@ -1143,8 +1132,8 @@ describe("agentLoop tracing", () => {
     const harness = makeHarness([makeTextMessage("done")], { tracer });
     const storeDir = mkdtempSync(path.join(os.tmpdir(), "blh-loop-store-"));
     harness.sessionStore = SessionStore.create(storeDir);
-    const messages = harness.newSession();
-    await harness.runTurn(messages, "go");
+    const transcript = harness.newTranscript();
+    await harness.runTurn(transcript, "go");
 
     const events = readTrace(dir);
     expect(events.length).toBeGreaterThan(0);
@@ -1160,7 +1149,7 @@ describe("agentLoop tracing", () => {
       background: { hasRunning: () => false },
     } as unknown as JobsRuntime;
     const harness = makeHarness([makeTextMessage("done")], { jobs, tracer });
-    await harness.runScheduledTurn([]);
+    await harness.runScheduledTurn(new Transcript());
 
     const jobEvents = readTrace(dir).filter((e) => e["type"] === "job");
     expect(jobEvents.length).toBe(1);
@@ -1179,8 +1168,8 @@ describe("agentLoop tracing", () => {
       [makeToolCallMessage("echo", { text: "hi" }), makeTextMessage("done")],
       { hooks, tracer },
     );
-    const messages: ChatMessage[] = [{ role: "user", content: "go" }];
-    await agentLoop(harness, messages, "go", undefined, controller.signal);
+    const transcript = new Transcript(); transcript.append({ role: "user", content: "go" });
+    await agentLoop(harness, transcript, "go", undefined, controller.signal);
 
     const events = readTrace(dir);
     const last = events[events.length - 1]!;
@@ -1192,8 +1181,8 @@ describe("agentLoop tracing", () => {
     const provider = new FailingStreamProvider([makeTextMessage("done")]);
     const harness = makeHarness([], { provider, tracer });
     const bus = new EventBus();
-    const messages = harness.newSession();
-    await harness.runTurn(messages, "go", bus);
+    const transcript = harness.newTranscript();
+    await harness.runTurn(transcript, "go", bus);
 
     const trace = readTrace(dir);
     const llmEvents = trace.filter((e) => e["type"] === "llm");
@@ -1224,7 +1213,7 @@ describe("agentLoop tracing", () => {
 
     const { tracer, dir } = makeTracer();
     const harness = makeHarness([], { provider: new UsageProvider(), tracer });
-    await harness.runTurn(harness.newSession(), "go");
+    await harness.runTurn(harness.newTranscript(), "go");
     const llm = readTrace(dir).find((event) => event["type"] === "llm");
     expect(llm?.["usage"]).toEqual({ promptTokens: 11, completionTokens: 7 });
   });
@@ -1241,7 +1230,7 @@ describe("agentLoop tracing", () => {
 
     const { tracer, dir } = makeTracer();
     const harness = makeHarness([], { provider: new LegacyProvider(), tracer });
-    await harness.runTurn(harness.newSession(), "go");
+    await harness.runTurn(harness.newTranscript(), "go");
     const llm = readTrace(dir).find((event) => event["type"] === "llm");
     expect(llm?.["usage"]).toBeNull();
     expect(readLedgerCount(dir)).toBe(0);

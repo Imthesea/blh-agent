@@ -47,13 +47,13 @@ describe("session 冒烟（真实落盘，仅 mock LLM）", () => {
       makeTextMessage("done"),
     ]);
     harness.sessionStore = store;
-    const messages = harness.newSession();
-    await harness.runTurn(messages, "echo hi");
+    const transcript = harness.newTranscript();
+    await harness.runTurn(transcript, "echo hi");
 
     const files = fs.readdirSync(path.join(tempDir, ".sessions")).filter((f) => f.endsWith(".jsonl"));
     expect(files).toHaveLength(1);
 
-    const loaded = SessionStore.load(store.path);
+    const loaded = SessionStore.loadMessages(store.path);
     expect(loaded.map((m) => m.role)).toEqual(["user", "assistant", "tool", "assistant"]);
     expect(loaded.some((m) => m.role === "system")).toBe(false);
   });
@@ -70,38 +70,38 @@ describe("session 冒烟（真实落盘，仅 mock LLM）", () => {
     const replies = Array.from({ length: turns + 2 }, () => makeTextMessage("ok")); // +1 触发轮 +1 余量
     const harness = makeHarness(replies, compactor);
     harness.sessionStore = store;
-    const messages = harness.newSession();
+    const transcript = harness.newTranscript();
     for (let i = 0; i < turns; i++) {
-      await harness.runTurn(messages, `msg ${i}`);
+      await harness.runTurn(transcript, `msg ${i}`);
     }
-    const before = SessionStore.load(store.path).length;
-    await harness.runTurn(messages, "trigger compaction");
+    const before = SessionStore.loadMessages(store.path).length;
+    await harness.runTurn(transcript, "trigger compaction");
 
-    // 内存出现精确的归档 marker
-    expect(messages.some((m) => compactor.isArchiveMarker(m))).toBe(true);
+    // snipCompact 是本地上下文变换，不写入事实消息
+    expect(transcript.messages.some((m) => compactor.isArchiveMarker(m))).toBe(false);
     // session 文件仍只有一个（无新快照）
     expect(fs.readdirSync(path.join(tempDir, ".sessions")).filter((f) => f.endsWith(".jsonl"))).toHaveLength(1);
     // append 只新增本轮 user + assistant
-    expect(SessionStore.load(store.path).length - before).toBe(2);
+    expect(SessionStore.loadMessages(store.path).length - before).toBe(2);
     // 不产生 .transcripts
     expect(fs.existsSync(path.join(tempDir, ".transcripts"))).toBe(false);
   });
 
   it("SessionStore 持久化原语冒烟：latest + load 读回历史并续写同一文件", async () => {
     const store = SessionStore.create(tempDir);
-    store.append({ role: "user", content: "hello" });
-    store.append({ role: "assistant", content: "hi" });
+    store.appendEvent({ type: "message", seq: 1, timestamp: new Date(0).toISOString(), message: { role: "user", content: "hello" } });
+    store.appendEvent({ type: "message", seq: 2, timestamp: new Date(0).toISOString(), message: { role: "assistant", content: "hi" } });
 
     const latest = SessionStore.latest(tempDir);
     expect(latest).toBe(store.path);
-    expect(SessionStore.load(latest!)).toEqual([
+    expect(SessionStore.loadMessages(latest!)).toEqual([
       { role: "user", content: "hello" },
       { role: "assistant", content: "hi" },
     ]);
 
     const reopened = SessionStore.open(latest!);
-    reopened.append({ role: "user", content: "again" });
-    expect(SessionStore.load(latest!)).toHaveLength(3);
+    reopened.appendEvent({ type: "message", seq: 3, timestamp: new Date(0).toISOString(), message: { role: "user", content: "again" } });
+    expect(SessionStore.loadMessages(latest!)).toHaveLength(3);
     expect(fs.readdirSync(path.join(tempDir, ".sessions")).filter((f) => f.endsWith(".jsonl"))).toHaveLength(1);
   });
 });

@@ -2,11 +2,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ChatMessage } from "../../src/contracts/types.js";
 import { BackgroundManager } from "../../src/jobs/background.js";
 import { CronScheduler } from "../../src/jobs/cron.js";
 import { AgentLock } from "../../src/runtime/agent-lock.js";
 import { JobsRuntime } from "../../src/jobs/runtime.js";
+import { Transcript } from "../../src/session/transcript.js";
 
 let tmpDir: string;
 
@@ -40,10 +40,11 @@ describe("JobsRuntime", () => {
     const runtime = makeRuntime();
     const job = runtime.cron.schedule("* * * * *", "run tests");
     runtime.cron.pollDue(new Date(2026, 8, 14, 10, 30));
-    const messages: ChatMessage[] = [{ role: "user", content: "hi" }];
-    const fired = runtime.consumeAndInjectCron(messages);
+    const transcript = new Transcript();
+    transcript.append({ role: "user", content: "hi" });
+    const fired = runtime.consumeAndInjectCron(transcript);
     expect(fired.map((j) => j.id)).toEqual([job.id]);
-    expect(messages[messages.length - 1]).toEqual({
+    expect(transcript.messages.at(-1)).toEqual({
       role: "user",
       content: "[Scheduled] run tests",
     });
@@ -63,16 +64,17 @@ describe("JobsRuntime", () => {
     while (runtime.background.tasks[taskId]?.status === "running" && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
-    const messages: ChatMessage[] = [];
-    expect(runtime.injectBackgroundResults(messages)).toBe(1);
-    expect(messages[messages.length - 1]?.content).toContain("<task_notification>");
+    const transcript = new Transcript();
+    expect(runtime.injectBackgroundResults(transcript)).toBe(1);
+    expect(transcript.messages.at(-1)?.content).toContain("<task_notification>");
   });
 
   it("injectBackgroundResults empty", () => {
     const runtime = makeRuntime();
-    const messages: ChatMessage[] = [{ role: "user", content: "hi" }];
-    expect(runtime.injectBackgroundResults(messages)).toBe(0);
-    expect(messages).toHaveLength(1);
+    const transcript = new Transcript();
+    transcript.append({ role: "user", content: "hi" });
+    expect(runtime.injectBackgroundResults(transcript)).toBe(0);
+    expect(transcript.messages).toHaveLength(1);
   });
 
   it("start/stop idempotent", async () => {

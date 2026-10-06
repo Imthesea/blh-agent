@@ -10,6 +10,7 @@ import type { ChatProvider, ChatMessage, ToolDefinition } from "../../src/contra
 import { AgentLock } from "../../src/runtime/agent-lock.js";
 import { TaskStore } from "../../src/planning/tasks.js";
 import { MockProvider } from "../integration/helpers.js";
+import { Transcript } from "../../src/session/transcript.js";
 
 let tmpDir: string;
 
@@ -95,9 +96,10 @@ describe("TeamRuntime", () => {
   it("consume_and_inject_team appends team events", () => {
     const team = makeTeam();
     team.bus.send("bob", "lead", "auth done", "result");
-    const messages = [{ role: "user" as const, content: "hi" }];
-    expect(team.consumeAndInjectTeam(messages)).toBe(1);
-    const last = messages[messages.length - 1];
+    const transcript = new Transcript();
+    transcript.append({ role: "user", content: "hi" });
+    expect(team.consumeAndInjectTeam(transcript)).toBe(1);
+    const last = transcript.messages.at(-1);
     expect(last?.content).toContain("auth done");
     expect(last?.content?.startsWith("[Team events]")).toBe(true);
   });

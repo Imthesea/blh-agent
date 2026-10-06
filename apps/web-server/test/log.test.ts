@@ -10,13 +10,13 @@ import { SSEBroadcaster } from "../src/bridge.js";
 import { SessionManager } from "../src/session.js";
 import { ApprovalCoordinator } from "../src/approval.js";
 import type { TurnLock, WebTurnRunner } from "../src/types.js";
-import { makeTestSessionStore } from "./helpers.js";
+import { makeTestSessionStore, makeTranscript } from "./helpers.js";
 
 async function makeContext(workdir: string): Promise<WebContext> {
   const broadcaster = new SSEBroadcaster();
   const approvals = new ApprovalCoordinator((event) => broadcaster.broadcast(event));
   const runner: WebTurnRunner = {
-    newSession: () => [{ role: "system", content: "sys" }],
+    newTranscript: (events) => makeTranscript(events),
     runTurn: async () => {},
   };
   const lock: TurnLock = { withLock: async <T,>(fn: () => Promise<T>) => fn() };

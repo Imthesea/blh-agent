@@ -96,7 +96,7 @@ export class OpenAICompatProvider implements ChatProvider {
   }
 
   private async requestChat(
-    messages: ChatMessage[],
+    messages: readonly ChatMessage[],
     tools: ToolDefinition[],
     maxTokens?: number,
     signal?: AbortSignal,
@@ -131,13 +131,13 @@ export class OpenAICompatProvider implements ChatProvider {
     return { message: fromOpenAIMessage(message), usage };
   }
 
-  async chat(messages: ChatMessage[], tools: ToolDefinition[], maxTokens?: number, signal?: AbortSignal): Promise<ChatMessage> {
+  async chat(messages: readonly ChatMessage[], tools: ToolDefinition[], maxTokens?: number, signal?: AbortSignal): Promise<ChatMessage> {
     log.debug("chat request", { model: this.config.model, messages: messages.length, tools: tools.length });
     return (await this.requestChat(messages, tools, maxTokens, signal)).message;
   }
 
   async chatWithUsage(
-    messages: ChatMessage[],
+    messages: readonly ChatMessage[],
     tools: ToolDefinition[],
     maxTokens?: number,
     signal?: AbortSignal,
@@ -148,7 +148,7 @@ export class OpenAICompatProvider implements ChatProvider {
 
   /** 无 tools 单轮,额外返回 usage(供 workflow runner 记账)。 */
   async chatCompletion(
-    messages: ChatMessage[],
+    messages: readonly ChatMessage[],
     maxTokens?: number,
   ): Promise<{ message: ChatMessage; usage: ChatUsage }> {
     log.debug("chatCompletion request", { model: this.config.model, messages: messages.length });
@@ -176,7 +176,7 @@ export class OpenAICompatProvider implements ChatProvider {
   }
 
   async *stream(
-    messages: ChatMessage[],
+    messages: readonly ChatMessage[],
     tools: ToolDefinition[],
     maxTokens?: number,
     signal?: AbortSignal,

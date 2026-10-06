@@ -72,7 +72,7 @@ export function collectViolations(sourceRoot, config) {
         continue;
       }
 
-      if (from === "runtime" && (features.has(to) || to === config.compositionRoot)) {
+      if (from === "runtime" && !shared.has(to) && (features.has(to) || to === config.compositionRoot)) {
         violations.push(`${path.relative(sourceRoot, file)}: runtime cannot import ${to}`);
         continue;
       }

@@ -11,6 +11,7 @@ import { ToolRegistry } from "../tools/registry.js";
 import type { Tracer } from "../tracing/tracer.js";
 import type { BusMessage } from "./bus.js";
 import type { Task, TaskStore } from "../planning/tasks.js";
+import { Transcript } from "../session/transcript.js";
 
 const IDLE_SCAN_INTERVAL = 2000;
 
@@ -47,9 +48,14 @@ const ICONS: Record<string, string> = { pending: "[ ]", in_progress: "[~]", comp
 
 export class TeammateRuntime {
   readonly tools: ToolRegistry;
-  readonly messages: ChatMessage[];
+  readonly transcript: Transcript;
   readonly systemPrompt: string;
   private readonly loopTracer: Tracer | undefined;
+
+  /** 保持旧的只读视图，供调用方观察当前投影消息。 */
+  get messages(): readonly ChatMessage[] {
+    return this.transcript.messages;
+  }
 
   /**
    * 构造函数：创建一个"队友"的运行器。
@@ -93,10 +99,8 @@ export class TeammateRuntime {
       userContent +=
         "\n\n[Plan required] Submit a plan and wait for Lead approval before changing files or using bash.";
     }
-    this.messages = [
-      { role: "system", content: this.systemPrompt },
-      { role: "user", content: userContent },
-    ];
+    this.transcript = new Transcript({ system: { role: "system", content: this.systemPrompt } });
+    this.transcript.append({ role: "user", content: userContent });
     this.tools = this.buildTools();
   }
 
@@ -380,7 +384,7 @@ export class TeammateRuntime {
       workMessages.push(`[Message from ${msg.from}] ${msg.content}`);
     }
     if (workMessages.length > 0) {
-      this.messages.push({ role: "user", content: workMessages.join("\n") });
+      this.transcript.append({ role: "user", content: workMessages.join("\n") });
     }
     return false;
   }
@@ -401,16 +405,16 @@ export class TeammateRuntime {
       if (signal?.aborted) return false;
       const inbox = await this.team.waitForMessages(this.name, IDLE_SCAN_INTERVAL, signal);
       if (inbox.length > 0) {
-        const before = this.messages.length;
+        const before = this.transcript.lastSeq;
         if (this.handleInbox(inbox)) return false;
-        if (this.messages.length > before) return true;
+        if (this.transcript.lastSeq > before) return true;
         continue;
       }
       const task = this.team.claimNextTask(this.name);
       if (!task) continue;
       if (signal?.aborted) return false;
       const cwd = this.team.assignmentCwd(this.name);
-      this.messages.push({
+      this.transcript.append({
         role: "user",
         content: `[Auto-claimed task ${task.id}] ${task.subject}\n${task.description}\nWork directory: ${cwd}`,
       });
@@ -448,7 +452,7 @@ export class TeammateRuntime {
     try {
       const result = await runAgentLoop(
         runtime,
-        this.messages,
+        this.transcript,
         `[teammate:${this.name}]`,
         undefined,
         signal,
@@ -486,7 +490,7 @@ export class TeammateRuntime {
         gate === "rejected"
           ? "[Plan rejected] Revise the plan and call submit_plan again."
           : "[Plan required] Call submit_plan and wait for approval before changing files or using bash.";
-      this.messages.push({ role: "user", content: notice });
+      this.transcript.append({ role: "user", content: notice });
       return "continue";
     } else {
       this.team.releaseCompleted(this.name);

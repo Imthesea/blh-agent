@@ -4,8 +4,8 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionManager } from "../src/session.js";
 import { ApprovalCoordinator } from "../src/approval.js";
-import type { ChatMessage, TurnLock, WebEvent, WebTurnRunner } from "../src/types.js";
-import { makeTestSessionStore } from "./helpers.js";
+import type { ChatMessage, TranscriptLike, TurnLock, WebEvent, WebTurnRunner } from "../src/types.js";
+import { makeTestSessionStore, makeTranscript } from "./helpers.js";
 
 function fakeLock(): TurnLock {
   return { withLock: async <T,>(fn: () => Promise<T>) => fn() };
@@ -13,10 +13,10 @@ function fakeLock(): TurnLock {
 
 function fakeRunner(): WebTurnRunner {
   return {
-    newSession: () => [{ role: "system", content: "sys" }],
-    runTurn: vi.fn(async (messages: ChatMessage[], text: string) => {
-      messages.push({ role: "user", content: text });
-      messages.push({ role: "assistant", content: `reply:${text}` });
+    newTranscript: (events) => makeTranscript(events),
+    runTurn: vi.fn(async (transcript: TranscriptLike, text: string) => {
+      (transcript.messages as ChatMessage[]).push({ role: "user", content: text });
+      (transcript.messages as ChatMessage[]).push({ role: "assistant", content: `reply:${text}` });
     }),
   };
 }
@@ -39,7 +39,7 @@ describe("SessionManager", () => {
     );
     const handle = await manager.create(tmpDir);
 
-    expect(handle.messages).toEqual([{ role: "system", content: "sys" }]);
+    expect(handle.transcript.messages).toEqual([{ role: "system", content: "sys" }]);
     expect(runner.sessionStore?.path).toBe(handle.file);
     expect(manager.list()).toEqual([handle]);
     expect(manager.get(handle.id)).toBe(handle);
@@ -58,7 +58,7 @@ describe("SessionManager", () => {
 
     await manager.runTurn(handle.id, "hi");
     expect(runner.runTurn).toHaveBeenCalledTimes(1);
-    expect(handle.messages.map((m) => m.content)).toContain("reply:hi");
+    expect(handle.transcript.messages.map((m) => m.content)).toContain("reply:hi");
   });
 
   it("session 切换等待运行中的回合并使旧会话排队回合失效", async () => {
@@ -71,10 +71,10 @@ describe("SessionManager", () => {
       releaseTurn = resolve;
     });
     const runner: WebTurnRunner = {
-      newSession: () => [{ role: "system", content: "sys" }],
-      runTurn: vi.fn(async (messages: ChatMessage[], text: string) => {
-        messages.push({ role: "user", content: text });
-        messages.push({ role: "assistant", content: `reply:${text}` });
+      newTranscript: (events) => makeTranscript(events),
+      runTurn: vi.fn(async (transcript: TranscriptLike, text: string) => {
+        (transcript.messages as ChatMessage[]).push({ role: "user", content: text });
+        (transcript.messages as ChatMessage[]).push({ role: "assistant", content: `reply:${text}` });
         turnStarted();
         await turnBlocker;
       }),
@@ -99,8 +99,8 @@ describe("SessionManager", () => {
     await firstTurn;
     const newHandle = await switchedSession;
     await expect(staleTurn).rejects.toThrow("no such session");
-    expect(oldHandle.messages.map((message) => message.content)).toContain("reply:first");
-    expect(newHandle.messages).toEqual([{ role: "system", content: "sys" }]);
+    expect(oldHandle.transcript.messages.map((message) => message.content)).toContain("reply:first");
+    expect(newHandle.transcript.messages).toEqual([{ role: "system", content: "sys" }]);
     expect(manager.list()).toEqual([newHandle]);
   });
 
@@ -114,10 +114,10 @@ describe("SessionManager", () => {
       makeTestSessionStore(),
     );
     const store = (await manager.create(tmpDir)).store;
-    store.append({ role: "user", content: "old" });
+    store.appendEvent({ type: "message", seq: 1, timestamp: new Date(0).toISOString(), message: { role: "user", content: "old" } });
 
     const handle = await manager.resume(tmpDir, path.basename(store.path));
-    expect(handle.messages.map((m) => m.content)).toEqual(["sys", "old"]);
+    expect(handle.transcript.messages.map((m) => m.content)).toEqual(["sys", "old"]);
     expect(runner.sessionStore?.path).toBe(store.path);
   });
 
@@ -190,7 +190,7 @@ describe("SessionManager", () => {
     const [cur] = manager.list();
     expect(cur).toBeDefined();
     expect(cur!.file).not.toBe(handle.file);
-    expect(cur!.messages).toEqual([{ role: "system", content: "sys" }]);
+    expect(cur!.transcript.messages).toEqual([{ role: "system", content: "sys" }]);
   });
 
   it("remove 删除非当前会话不影响当前会话", async () => {
@@ -230,7 +230,7 @@ describe("SessionManager", () => {
   it("stop 触发正在运行轮次的 signal", async () => {
     let seenSignal: AbortSignal | undefined;
     const runner: WebTurnRunner = {
-      newSession: () => [{ role: "system", content: "sys" }],
+      newTranscript: (events) => makeTranscript(events),
       runTurn: vi.fn(async (_messages, _text, _events, signal) => {
         seenSignal = signal;
         await new Promise<void>((resolve) => signal?.addEventListener("abort", () => resolve(), { once: true }));
@@ -253,7 +253,7 @@ describe("SessionManager", () => {
 
     const signals: AbortSignal[] = [];
     const runner: WebTurnRunner = {
-      newSession: () => [{ role: "system", content: "sys" }],
+      newTranscript: (events) => makeTranscript(events),
       runTurn: vi.fn(async (_messages, _text, _events, signal) => {
         signals.push(signal!);
         if (signals.length === 1) {
@@ -292,7 +292,7 @@ describe("SessionManager", () => {
     const approvals = new ApprovalCoordinator(() => {});
     let decision: string | undefined;
     const runner: WebTurnRunner = {
-      newSession: () => [{ role: "system", content: "sys" }],
+      newTranscript: (events) => makeTranscript(events),
       runTurn: vi.fn(async (_messages, _text, _events, _signal) => {
         decision = await approvals.ask({ tool: "bash", target: "ls", args: {} });
       }),
@@ -308,7 +308,7 @@ describe("SessionManager", () => {
 
   it("shutdown 拒绝排队中和后续的会话变更", async () => {
     const runner: WebTurnRunner = {
-      newSession: () => [{ role: "system", content: "sys" }],
+      newTranscript: (events) => makeTranscript(events),
       runTurn: vi.fn(async (_messages, _text, _events, signal) => {
         await new Promise<void>((resolve) => {
           signal?.addEventListener("abort", () => resolve(), { once: true });
@@ -359,7 +359,7 @@ describe("SessionManager", () => {
       releaseTurn = resolve;
     });
     const runner: WebTurnRunner = {
-      newSession: () => [{ role: "system", content: "sys" }],
+      newTranscript: (events) => makeTranscript(events),
       runTurn: vi.fn(async () => {
         turnStarted();
         await turnBlocker;
@@ -407,7 +407,7 @@ describe("SessionManager", () => {
 
   it("shutdown 不因当前轮次失败而失败", async () => {
     const runner: WebTurnRunner = {
-      newSession: () => [{ role: "system", content: "sys" }],
+      newTranscript: (events) => makeTranscript(events),
       runTurn: vi.fn(async () => {
         throw new Error("turn failed");
       }),

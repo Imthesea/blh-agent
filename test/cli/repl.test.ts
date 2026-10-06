@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { repl } from "../../src/cli/repl.js";
 import type { TurnRunner } from "../../src/cli/repl.js";
 import { makeTextMessage, MockProvider } from "../integration/helpers.js";
-import type { ChatMessage, Config } from "../../src/contracts/types.js";
+import type { Config } from "../../src/contracts/types.js";
 import { EventBus } from "../../src/runtime/events.js";
 import { Harness } from "../../src/runtime/harness.js";
 import { HookBus } from "../../src/runtime/hooks.js";
@@ -17,14 +17,15 @@ import { MessageBus } from "../../src/agents/bus.js";
 import { TeamRuntime } from "../../src/agents/team.js";
 import { TaskStore } from "../../src/planning/tasks.js";
 import { GoalController } from "../../src/goals/controller.js";
+import { Transcript } from "../../src/session/transcript.js";
 
 function fakeRunner(replies: string[]): TurnRunner {
   let replyIndex = 0;
   return {
-    newSession: () => [],
-    runTurn: vi.fn(async (messages: ChatMessage[], _text: string) => {
+    newTranscript: () => new Transcript(),
+    runTurn: vi.fn(async (transcript: Transcript, _text: string) => {
       const reply = replies[replyIndex++] ?? "";
-      messages.push(makeTextMessage(reply));
+      transcript.append(makeTextMessage(reply));
     }),
   };
 }
@@ -34,9 +35,9 @@ function goalRunner() {
     evaluate: async () => ({ ok: false, reason: "", impossible: false }),
   });
   const runner: TurnRunner = {
-    newSession: () => [],
-    runTurn: vi.fn(async (messages: ChatMessage[], text: string) => {
-      messages.push(makeTextMessage(`reply:${text}`));
+    newTranscript: () => new Transcript(),
+    runTurn: vi.fn(async (transcript: Transcript, text: string) => {
+      transcript.append(makeTextMessage(`reply:${text}`));
     }),
     goal,
     goalCommand: Harness.prototype.goalCommand,
@@ -169,7 +170,7 @@ describe("repl", () => {
 
   it("keeps running after a turn throws", async () => {
     const runner: TurnRunner = {
-      newSession: () => [],
+      newTranscript: () => new Transcript(),
       runTurn: vi.fn(async () => {
         throw new Error("402 Insufficient Balance");
       }),
@@ -181,15 +182,15 @@ describe("repl", () => {
 
   it("streams text deltas and tool progress without double-printing", async () => {
     const runner: TurnRunner = {
-      newSession: () => [],
-      runTurn: vi.fn(async (messages: ChatMessage[], _text: string, events?: EventBus) => {
+      newTranscript: () => new Transcript(),
+      runTurn: vi.fn(async (transcript: Transcript, _text: string, events?: EventBus) => {
         await events?.emit({ type: "turn_start" });
         await events?.emit({ type: "assistant_text_delta", text: "Hel" });
         await events?.emit({ type: "assistant_text_delta", text: "lo" });
         await events?.emit({ type: "tool_call", id: "c1", name: "echo", arguments: "{}" });
         await events?.emit({ type: "tool_result", id: "c1", name: "echo", output: "ok", isError: false });
         await events?.emit({ type: "turn_end" });
-        messages.push(makeTextMessage("Hello"));
+        transcript.append(makeTextMessage("Hello"));
       }),
     };
     const printed: string[] = [];

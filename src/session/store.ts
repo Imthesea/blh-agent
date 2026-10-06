@@ -1,32 +1,92 @@
 import { appendFileSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import * as path from "node:path";
 import type { ChatMessage } from "../contracts/types.js";
+import { projectMessages, type SessionEvent } from "./transcript.js";
+
+export const CURRENT_SESSION_VERSION = 1;
+
+export interface SessionHeader {
+  type: "session";
+  version: 1;
+  id: string;
+  cwd: string;
+  createdAt: string;
+}
+
+export interface LoadedSession {
+  header: SessionHeader | null;
+  events: SessionEvent[];
+}
+
+const EVENT_TYPES = new Set(["message", "compaction", "rollback", "messageCancelled"]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isSessionHeader(value: unknown): value is SessionHeader {
+  return (
+    isRecord(value) &&
+    value["type"] === "session" &&
+    value["version"] === CURRENT_SESSION_VERSION &&
+    typeof value["id"] === "string" &&
+    typeof value["cwd"] === "string" &&
+    typeof value["createdAt"] === "string"
+  );
+}
+
+function isSessionEvent(value: unknown): value is SessionEvent {
+  return isRecord(value) && typeof value["type"] === "string" && EVENT_TYPES.has(value["type"]);
+}
+
+function maxEventSeq(events: readonly SessionEvent[]): number {
+  let seq = 0;
+  for (const event of events) {
+    if (!Number.isInteger(event.seq) || event.seq <= seq) {
+      throw new Error(`Session event seq must be increasing: ${event.seq}`);
+    }
+    seq = event.seq;
+  }
+  return seq;
+}
 
 /** 会话文件的唯一读写入口：单一 JSONL 文件持续 append，与压缩解耦。 */
 export class SessionStore {
   private static seq = 0;
+  private lastSeq: number;
 
-  private constructor(readonly path: string) {}
+  private constructor(readonly path: string, lastSeq = 0) {
+    this.lastSeq = lastSeq;
+  }
 
   static sessionsDir(workdir: string): string {
     return path.join(workdir, ".sessions");
   }
 
-  /** 新建 .sessions/session_<now>_<seq>.jsonl，返回持有该文件的实例。 */
+  /** 新建带 header 的会话文件，返回持有该文件的实例。 */
   static create(workdir: string): SessionStore {
     const dir = SessionStore.sessionsDir(workdir);
     mkdirSync(dir, { recursive: true });
     const filePath = path.join(dir, `session_${Date.now()}_${SessionStore.seq++}.jsonl`);
-    appendFileSync(filePath, "", "utf8");
+    const header: SessionHeader = {
+      type: "session",
+      version: CURRENT_SESSION_VERSION,
+      id: randomUUID(),
+      cwd: path.resolve(workdir),
+      createdAt: new Date().toISOString(),
+    };
+    appendFileSync(filePath, `${JSON.stringify(header)}\n`, "utf8");
     return new SessionStore(filePath);
   }
 
-  /** 打开已有文件（append 模式；appendFileSync 无持久句柄，无需 close）。 */
+  /** 打开已有文件并预加载最大事件 seq，供 appendEvent 校验使用。 */
   static open(filePath: string): SessionStore {
-    return new SessionStore(filePath);
+    const session = SessionStore.loadSession(filePath);
+    return new SessionStore(filePath, maxEventSeq(session.events));
   }
 
-  /** 返回 .sessions/ 下 mtime 最新的 .jsonl 路径；无则 null。mtime 并列时按文件名中的时间戳/序号取更晚者。 */
+  /** 返回 .sessions/ 下 mtime 最新的 .jsonl 路径；无则 null。 */
   static latest(workdir: string): string | null {
     const dir = SessionStore.sessionsDir(workdir);
     let names: string[];
@@ -56,7 +116,6 @@ export class SessionStore {
     return files[0]!;
   }
 
-  /** 从 session_<timestamp>_<seq>.jsonl 中解析 [timestamp, seq]，用于 mtime 并列时稳定排序。 */
   private static nameOrder(name: string): [number, number] {
     const match = /^session_(\d+)_(\d+)\.jsonl$/.exec(name);
     return match ? [Number(match[1]), Number(match[2])] : [-1, -1];
@@ -67,28 +126,70 @@ export class SessionStore {
     rmSync(filePath, { force: true });
   }
 
-  /** 逐行 JSON.parse 还原消息数组；空行 / 非法 JSON 行跳过。 */
-  static load(filePath: string): ChatMessage[] {
+  /** 读取 header 与事件；旧格式裸消息会包装为 message 事件。 */
+  static loadSession(filePath: string): LoadedSession {
     let raw: string;
     try {
       raw = readFileSync(filePath, "utf8");
     } catch {
-      return [];
+      return { header: null, events: [] };
     }
-    const messages: ChatMessage[] = [];
+
+    const parsed: unknown[] = [];
     for (const line of raw.split("\n")) {
       if (line.trim() === "") continue;
       try {
-        messages.push(JSON.parse(line) as ChatMessage);
+        parsed.push(JSON.parse(line) as unknown);
       } catch {
         // 容错：跳过无法解析的行
       }
     }
-    return messages;
+
+    let header: SessionHeader | null = null;
+    let startIndex = 0;
+    const first = parsed[0];
+    if (isSessionHeader(first)) {
+      header = first;
+      startIndex = 1;
+    }
+
+    const events: SessionEvent[] = [];
+    let seq = 0;
+    for (let index = startIndex; index < parsed.length; index++) {
+      const entry = parsed[index];
+      if (isSessionEvent(entry)) {
+        if (!Number.isInteger(entry.seq) || entry.seq <= seq) {
+          throw new Error(`Session event seq must be increasing: ${entry.seq}`);
+        }
+        events.push(entry);
+        seq = entry.seq;
+        continue;
+      }
+      // 无 header 的裸消息行是 v0 legacy 格式。
+      if (header === null && isRecord(entry) && entry["type"] === undefined) {
+        seq += 1;
+        events.push({
+          type: "message",
+          seq,
+          timestamp: new Date(0).toISOString(),
+          message: entry as unknown as ChatMessage,
+        });
+      }
+    }
+    return { header, events };
   }
 
-  /** JSON.stringify + "\n"，appendFileSync 追加。 */
-  append(message: ChatMessage): void {
-    appendFileSync(this.path, JSON.stringify(message) + "\n", "utf8");
+  /** 读取事件并投影为当前消息列表。 */
+  static loadMessages(filePath: string): ChatMessage[] {
+    return projectMessages(SessionStore.loadSession(filePath).events);
+  }
+
+  /** 追加一条会话事件；seq 必须严格递增。 */
+  appendEvent(event: SessionEvent): void {
+    if (!Number.isInteger(event.seq) || event.seq <= this.lastSeq) {
+      throw new Error(`Session event seq must be greater than ${this.lastSeq}: ${event.seq}`);
+    }
+    appendFileSync(this.path, `${JSON.stringify(event)}\n`, "utf8");
+    this.lastSeq = event.seq;
   }
 }

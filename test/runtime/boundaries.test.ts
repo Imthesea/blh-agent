@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { ChatProvider, Config } from "../../src/contracts/types.js";
 import { HookBus } from "../../src/runtime/hooks.js";
-import { agentLoop, lastAssistantText, runAgentLoop } from "../../src/runtime/loop.js";
+import { agentLoop, runAgentLoop } from "../../src/runtime/loop.js";
 import type { AgentLoopRuntime } from "../../src/runtime/ports.js";
+import { Transcript } from "../../src/session/transcript.js";
 
 const config: Config = {
   apiKey: "test-key",
@@ -27,14 +28,12 @@ describe("runtime boundaries", () => {
       },
       hooks: new HookBus(),
     };
-    const messages = [
-      { role: "system" as const, content: runtime.systemPrompt },
-      { role: "user" as const, content: "go" },
-    ];
+    const transcript = new Transcript({ system: { role: "system", content: runtime.systemPrompt } });
+    transcript.append({ role: "user", content: "go" });
 
-    await agentLoop(runtime, messages, "go");
+    await agentLoop(runtime, transcript, "go");
 
-    expect(lastAssistantText(messages)).toBe("port ok");
+    expect(transcript.lastAssistantTextAfter(0)).toBe("port ok");
   });
 
   it("supports a one-turn profile with a custom tool dispatcher", async () => {
@@ -61,12 +60,10 @@ describe("runtime boundaries", () => {
       },
       hooks: new HookBus(),
     };
-    const messages = [
-      { role: "system" as const, content: runtime.systemPrompt },
-      { role: "user" as const, content: "go" },
-    ];
+    const transcript = new Transcript({ system: { role: "system", content: runtime.systemPrompt } });
+    transcript.append({ role: "user", content: "go" });
 
-    const result = await runAgentLoop(runtime, messages, "go", undefined, undefined, {
+    const result = await runAgentLoop(runtime, transcript, "go", undefined, undefined, {
       maxTurns: 1,
       dispatchTool: async ({ call }) => `dispatched:${call.function.name}`,
     });
@@ -74,9 +71,9 @@ describe("runtime boundaries", () => {
     expect(result).toEqual({
       status: "max_turns",
       iterations: 1,
-      finalAssistant: messages[2],
+      finalAssistant: transcript.messages[2],
     });
-    expect(messages.at(-1)).toEqual({
+    expect(transcript.messages.at(-1)).toEqual({
       role: "tool",
       tool_call_id: "call_1",
       content: "dispatched:custom",

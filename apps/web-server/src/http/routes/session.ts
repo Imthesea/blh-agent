@@ -50,7 +50,14 @@ async function readFirstUser(file: string): Promise<string | null> {
     for await (const line of lines) {
       if (line.trim() === "") continue;
       try {
-        const message = JSON.parse(line) as { role?: unknown; content?: unknown };
+        const entry = JSON.parse(line) as {
+          type?: unknown;
+          message?: { role?: unknown; content?: unknown };
+          role?: unknown;
+          content?: unknown;
+        };
+        // 新事件格式：message 事件把消息嵌在 .message 里；旧格式是裸消息行。
+        const message = entry.type === "message" && entry.message ? entry.message : entry;
         if (message.role === "user") {
           return typeof message.content === "string" ? message.content : "";
         }
@@ -81,7 +88,7 @@ export async function handleSessionRoutes(
     const response: SessionInfo = {
       sessionId: handle.id,
       workdir: ctx.workdir,
-      messages: handle.messages,
+      messages: [...handle.transcript.messages],
     };
     sendJson(res, 200, response);
     return true;
@@ -111,7 +118,7 @@ export async function handleSessionRoutes(
       return true;
     }
     try {
-      const messages = ctx.sessionStore.load(filePath);
+      const messages = ctx.sessionStore.loadMessages(filePath);
       const response: SessionMessagesResponse = { file, messages };
       sendJson(res, 200, response);
     } catch {

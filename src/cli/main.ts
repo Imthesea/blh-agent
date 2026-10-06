@@ -4,10 +4,9 @@ import readline from "node:readline";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { lastAssistantText } from "../runtime/loop.js";
 import { repl, makeReadlineIO } from "./repl.js";
-import type { ChatMessage } from "../contracts/types.js";
 import { SessionStore } from "../session/store.js";
+import type { Transcript } from "../session/transcript.js";
 import { createLogger } from "@blh/logger";
 import type { ApprovalAsker, ApprovalDecision } from "../security/approval.js";
 import { startWebServerFromCli } from "./web.js";
@@ -220,12 +219,12 @@ async function main(): Promise<void> {
     // 打印启动信息：工作目录 + 模型名。
     log.info("启动", { workdir: harness.config.workdir, model: harness.config.model });
     // 新建一个只含 system 消息的会话。
-    const messages = harness.newSession();
+    const transcript = harness.newTranscript();
     try {
       // 把用户提示词当一轮输入跑一遍（内部会反复调用模型直到不再要工具）。
-      await harness.runTurn(messages, prompt);
+      await harness.runTurn(transcript, prompt);
       // 打印最后一条 assistant 回复。
-      console.log(lastAssistantText(messages));
+      console.log(transcript.lastAssistantTextAfter(0));
     } finally {
       await harness.dispose();
     }
@@ -243,7 +242,7 @@ async function main(): Promise<void> {
   log.info("启动 REPL", { workdir: harness.config.workdir, model: harness.config.model });
 
   try {
-    let messages: ChatMessage[];
+    let transcript: Transcript;
   if (doContinue) {
     // 继续旧会话：--continue 给了文件名就用它，否则找最近一次存档的会话。
     const file = continueFile
@@ -253,16 +252,15 @@ async function main(): Promise<void> {
     if (!file) throw new Error("没有找到可继续的会话");
     // 打开这个存档文件，后续新消息会往里追加。
     harness.sessionStore = SessionStore.open(file);
-    // 先建 system 消息，再把历史消息一条条塞回来。
-    messages = harness.newSession();
-    messages.push(...SessionStore.load(file));
+    // 从事件日志重放会话；system 由 Harness 重建，不重复落盘。
+    transcript = harness.newTranscript(SessionStore.loadSession(file).events);
   } else {
     // 全新会话：在 .sessions/ 下新建存档文件，再建一个只含 system 消息的会话。
     harness.sessionStore = SessionStore.create(harness.config.workdir);
-    messages = harness.newSession();
+    transcript = harness.newTranscript();
   }
   // 进入交互循环：不断读用户输入、跑 agent、打印结果，直到用户退出。
-  await repl(harness, makeReadlineIO(rl), messages);
+  await repl(harness, makeReadlineIO(rl), transcript);
   } finally {
     rl.close();
     await harness.dispose();

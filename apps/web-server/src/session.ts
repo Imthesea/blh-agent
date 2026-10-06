@@ -1,9 +1,9 @@
 import * as path from "node:path";
 import type {
   ApprovalDecision,
-  ChatMessage,
   SessionStoreLike,
   SessionStoreModule,
+  TranscriptLike,
   TurnLock,
   WebTurnRunner,
 } from "./types.js";
@@ -17,7 +17,7 @@ const log = createLogger("web-server.session");
 export interface SessionHandle {
   id: string;
   file: string;
-  messages: ChatMessage[];
+  transcript: TranscriptLike;
   store: SessionStoreLike;
 }
 
@@ -54,7 +54,7 @@ export class SessionManager {
     const handle: SessionHandle = {
       id: path.basename(store.path),
       file: store.path,
-      messages: this.runner.newSession(),
+      transcript: this.runner.newTranscript(),
       store,
     };
     log.debug("session created", { file: handle.file });
@@ -74,9 +74,8 @@ export class SessionManager {
     const fullPath = this.sessionFile(workdir, file);
     const store = this.sessionStore.open(fullPath);
     this.runner.sessionStore = store;
-    const messages = this.runner.newSession();
-    messages.push(...this.sessionStore.load(fullPath));
-    const handle: SessionHandle = { id: file, file: fullPath, messages, store };
+    const transcript = this.runner.newTranscript(this.sessionStore.loadSession(fullPath).events);
+    const handle: SessionHandle = { id: file, file: fullPath, transcript, store };
     log.debug("session resumed", { file: fullPath });
     this.current = handle;
     return handle;
@@ -107,7 +106,7 @@ export class SessionManager {
       // 在真正拿到锁、开始跑之前才登记 currentAbort，避免并发排队时被后一轮覆盖，
       // 导致 stop() 中断的是排队中的轮次而非正在运行的轮次。
       this.currentAbort = controller;
-      return this.runner.runTurn(handle.messages, text, events, controller.signal);
+      return this.runner.runTurn(handle.transcript, text, events, controller.signal);
     };
     log.debug("run turn", { id, textLength: text.length });
     // 用户提交优先：中断进行中的后台回合（dream/cron，其内部回滚后释放锁）。

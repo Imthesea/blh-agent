@@ -11,7 +11,7 @@ import { SessionManager } from "../src/session.js";
 import { ApprovalCoordinator } from "../src/approval.js";
 import type { TurnLock, WebTurnRunner } from "../src/types.js";
 import type { Server } from "node:http";
-import { makeTestSessionStore } from "./helpers.js";
+import { makeTestSessionStore, makeTranscript } from "./helpers.js";
 
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
@@ -22,7 +22,7 @@ async function makeContext(workdir: string, staticDir: string): Promise<WebConte
   const broadcaster = new SSEBroadcaster();
   const approvals = new ApprovalCoordinator((event) => broadcaster.broadcast(event));
   const runner: WebTurnRunner = {
-    newSession: () => [{ role: "system", content: "sys" }],
+    newTranscript: (events) => makeTranscript(events),
     runTurn: async () => {},
   };
   const lock: TurnLock = { withLock: async <T,>(fn: () => Promise<T>) => fn() };

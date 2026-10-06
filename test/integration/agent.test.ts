@@ -9,7 +9,6 @@ import { ToolRegistry } from "../../src/tools/registry.js";
 import { registerBuiltinTools } from "../../src/tools/index.js";
 import { DEFAULT_RULES } from "../../src/security/rules.js";
 import { makePermissionHook } from "../../src/security/approval.js";
-import { lastAssistantText } from "../../src/runtime/loop.js";
 import { MockProvider, makeToolCallMessage, makeTextMessage } from "./helpers.js";
 import type { Config } from "../../src/contracts/types.js";
 
@@ -52,15 +51,15 @@ describe("agent end-to-end", () => {
       makeToolCallMessage("read_file", { path: "hello.txt" }, "c2"),
       makeTextMessage("I wrote hello.txt and read it back: world"),
     ]);
-    const messages = harness.newSession();
-    await harness.runTurn(messages, "create and verify hello.txt");
+    const transcript = harness.newTranscript();
+    await harness.runTurn(transcript, "create and verify hello.txt");
     await expect(fs.readFile(path.join(tempDir, "hello.txt"), "utf8")).resolves.toBe(
       "world",
     );
-    const toolResults = messages.filter((message) => message.role === "tool");
+    const toolResults = transcript.messages.filter((message) => message.role === "tool");
     expect(toolResults[0]?.content).toContain("wrote 5 chars");
     expect(toolResults[1]?.content).toBe("1\tworld");
-    expect(lastAssistantText(messages)).toContain("world");
+    expect(transcript.lastAssistantTextAfter(0)).toContain("world");
   });
 
   it("bash is denied when user answers no", async () => {
@@ -71,9 +70,9 @@ describe("agent end-to-end", () => {
       ],
       "n",
     );
-    const messages = harness.newSession();
-    await harness.runTurn(messages, "list files");
-    const toolResults = messages.filter((message) => message.role === "tool");
+    const transcript = harness.newTranscript();
+    await harness.runTurn(transcript, "list files");
+    const toolResults = transcript.messages.filter((message) => message.role === "tool");
     expect(toolResults[0]?.content).toBe("denied by user");
   });
 
@@ -85,9 +84,9 @@ describe("agent end-to-end", () => {
       ],
       "y", // 即使答 y 也不应被问到
     );
-    const messages = harness.newSession();
-    await harness.runTurn(messages, "force push");
-    const toolResults = messages.filter((message) => message.role === "tool");
+    const transcript = harness.newTranscript();
+    await harness.runTurn(transcript, "force push");
+    const toolResults = transcript.messages.filter((message) => message.role === "tool");
     expect(toolResults[0]?.content).toBe(
       "denied by permission rule (bash: git push --force)",
     );
