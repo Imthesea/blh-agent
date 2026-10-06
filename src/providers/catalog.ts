@@ -39,8 +39,13 @@ const builtin: ProviderDefinition[] = [
 
 const providers: ProviderDefinition[] = [...builtin];
 
+/** 非抛错查找：按 id 返回 provider 定义，找不到返回 undefined，供需要聚合诊断的调用方使用。 */
+export function findProviderDefinition(id: string): ProviderDefinition | undefined {
+  return providers.find((d) => d.id === id);
+}
+
 export function getProviderDefinition(id: string): ProviderDefinition {
-  const def = providers.find((d) => d.id === id);
+  const def = findProviderDefinition(id);
   if (!def) {
     throw new Error(`未知 provider '${id}'（可用：${listProviders().join(", ")}）`);
   }

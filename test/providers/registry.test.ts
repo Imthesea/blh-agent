@@ -50,4 +50,24 @@ describe("createProvider", () => {
     const { getProviderDefinition } = await import("../../src/providers/catalog.js");
     expect(resolveApiKey({ ...noProvider, apiKey: "sk-file" }, getProviderDefinition("deepseek"))).toBe("sk-file");
   });
+
+  it("传入 diagnostics 时缺 key 记为 error 诊断而不抛错", async () => {
+    vi.stubEnv("MOONSHOT_API_KEY", "");
+    const { createProvider } = await import("../../src/providers/registry.js");
+    const { Diagnostics } = await import("../../src/contracts/diagnostics.js");
+    const { OpenAICompatProvider } = await import("../../src/providers/openai-compat.js");
+    const diagnostics = new Diagnostics();
+    const provider = createProvider({ ...noProvider, provider: "kimi" }, diagnostics);
+    expect(diagnostics.hasErrors()).toBe(true);
+    expect(diagnostics.errors().map((d) => d.message).join("")).toContain("MOONSHOT_API_KEY");
+    expect(provider).toBeInstanceOf(OpenAICompatProvider);
+  });
+
+  it("未知 provider 时既记诊断也抛错", async () => {
+    const { createProvider } = await import("../../src/providers/registry.js");
+    const { Diagnostics } = await import("../../src/contracts/diagnostics.js");
+    const diagnostics = new Diagnostics();
+    expect(() => createProvider({ ...noProvider, provider: "nope" }, diagnostics)).toThrow(/未知 provider/);
+    expect(diagnostics.hasErrors()).toBe(true);
+  });
 });

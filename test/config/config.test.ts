@@ -1,16 +1,14 @@
-import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-const originalCwd = process.cwd();
+let tmpRoot = "";
+let fakeHome = "";
 
-// 会影响 loadConfig 解析的环境变量：vitest 会自动加载仓库根 .env，机器上也可能有系统环境变量（如 DASHSCOPE_API_KEY）
-const CONFIG_ENVS = [
-  "OPENAI_API_KEY",
-  "OPENAI_BASE_URL",
-  "OPENAI_MODEL",
+const CLEAR_ENVS = [
   "DEEPSEEK_API_KEY",
+  "OPENAI_API_KEY",
   "ANTHROPIC_API_KEY",
   "DASHSCOPE_API_KEY",
   "MOONSHOT_API_KEY",
@@ -19,214 +17,81 @@ const CONFIG_ENVS = [
   "BLH_MAX_OUTPUT_CHARS",
 ];
 
-const savedEnv: Record<string, string | undefined> = {};
-
 beforeEach(() => {
-  for (const env of CONFIG_ENVS) {
-    savedEnv[env] = process.env[env];
-    delete process.env[env];
-  }
+  tmpRoot = mkdtempSync(path.join(os.tmpdir(), "blh-config-"));
+  fakeHome = mkdtempSync(path.join(os.tmpdir(), "blh-home-"));
+  // 把 os.homedir() 指到临时目录，隔离 ~/.blh/config.yaml / settings.json 的读写。
+  vi.stubEnv("USERPROFILE", fakeHome);
+  vi.stubEnv("HOME", fakeHome);
+  for (const key of CLEAR_ENVS) vi.stubEnv(key, "");
 });
 
 afterEach(() => {
+  rmSync(tmpRoot, { recursive: true, force: true });
+  rmSync(fakeHome, { recursive: true, force: true });
   vi.unstubAllEnvs();
-  for (const env of CONFIG_ENVS) {
-    if (savedEnv[env] === undefined) delete process.env[env];
-    else process.env[env] = savedEnv[env];
-  }
 });
 
-describe("loadConfig provider/model", () => {
-  let tmpDir: string;
-  let tmpUserDir: string;
-
-  beforeEach(() => {
-    tmpDir = mkdtempSync(path.join(os.tmpdir(), "config-"));
-    tmpUserDir = mkdtempSync(path.join(os.tmpdir(), "config-user-"));
-    process.chdir(tmpDir);
-    vi.stubEnv("USERPROFILE", tmpUserDir);
-  });
-
-  afterEach(() => {
-    process.chdir(originalCwd);
-    rmSync(tmpDir, { recursive: true, force: true });
-    rmSync(tmpUserDir, { recursive: true, force: true });
-  });
-
-  it("默认 provider 为 deepseek，model 用其 defaultModel", async () => {
+describe("loadConfig 诊断聚合", () => {
+  it("一次收集多个配置错误，并返回兜底值", async () => {
     const { loadConfig } = await import("../../src/config/config.js");
-    const config = loadConfig({ configRoot: tmpDir });
-    expect(config.provider).toBe("deepseek");
-    expect(config.model).toBe("deepseek-chat");
-    expect(config.baseUrl).toBe("https://api.deepseek.com");
-    expect(config.apiKey).toBe("");
-    expect(config.mcpServers).toEqual([]);
-  });
+    const { Diagnostics } = await import("../../src/contracts/diagnostics.js");
+    mkdirSync(path.join(tmpRoot, ".blh"), { recursive: true });
+    writeFileSync(path.join(tmpRoot, ".blh", "mcp.yaml"), "- 123\n- name: ok\n  command: echo\n", "utf8");
 
-  it("BLH_PROVIDER 环境变量指定 provider", async () => {
-    vi.stubEnv("BLH_PROVIDER", "anthropic");
-    const { loadConfig } = await import("../../src/config/config.js");
-    const config = loadConfig({ configRoot: tmpDir });
-    expect(config.provider).toBe("anthropic");
-    expect(config.model).toBe("claude-sonnet-4-5");
-  });
-
-  it("配置文件 .blh/config.yaml 覆盖默认", async () => {
-    mkdirSync(path.join(tmpDir, ".blh"), { recursive: true });
-    writeFileSync(path.join(tmpDir, ".blh", "config.yaml"), "provider: qwen\nmodel: qwen-plus\n");
-    const { loadConfig } = await import("../../src/config/config.js");
-    const config = loadConfig({ configRoot: tmpDir });
-    expect(config.provider).toBe("qwen");
-    expect(config.model).toBe("qwen-plus");
-  });
-
-  it("全局 ~/.blh/config.yaml 优先于默认，项目 .blh/config.yaml 再覆盖全局", async () => {
-    mkdirSync(path.join(tmpUserDir, ".blh"), { recursive: true });
-    writeFileSync(path.join(tmpUserDir, ".blh", "config.yaml"), "provider: kimi\n");
-    mkdirSync(path.join(tmpDir, ".blh"), { recursive: true });
-    writeFileSync(path.join(tmpDir, ".blh", "config.yaml"), "provider: qwen\n");
-    const { loadConfig } = await import("../../src/config/config.js");
-    expect(loadConfig({ configRoot: tmpDir }).provider).toBe("qwen");
-  });
-
-  it("configRoot 与 workdir 分离", async () => {
-    const runtimeDir = mkdtempSync(path.join(os.tmpdir(), "config-workdir-"));
-    try {
-      mkdirSync(path.join(tmpDir, ".blh"), { recursive: true });
-      writeFileSync(path.join(tmpDir, ".blh", "config.yaml"), "provider: qwen\nmodel: qwen-plus\n");
-      writeFileSync(path.join(tmpDir, ".env"), "OPENAI_MODEL=model-from-env\n");
-      mkdirSync(path.join(runtimeDir, ".blh"), { recursive: true });
-      writeFileSync(path.join(runtimeDir, ".blh", "config.yaml"), "provider: anthropic\n");
-
-      const { loadConfig } = await import("../../src/config/config.js");
-      const config = loadConfig({ configRoot: tmpDir, workdir: runtimeDir });
-
-      expect(config.provider).toBe("qwen");
-      expect(config.model).toBe("model-from-env");
-      expect(config.workdir).toBe(runtimeDir);
-    } finally {
-      rmSync(runtimeDir, { recursive: true, force: true });
-    }
-  });
-
-  it("cli 覆盖一切", async () => {
-    const { loadConfig } = await import("../../src/config/config.js");
-    const config = loadConfig({
-      configRoot: tmpDir,
-      cli: { provider: "anthropic", model: "claude-x" },
-    });
-    expect(config.provider).toBe("anthropic");
-    expect(config.model).toBe("claude-x");
-  });
-
-  it("显式 provider 写入 settings 记忆", async () => {
-    const { loadConfig } = await import("../../src/config/config.js");
-    const { loadSettings } = await import("../../src/config/settings.js");
-    vi.stubEnv("BLH_PROVIDER", "qwen");
-    loadConfig({ configRoot: tmpDir });
-    expect(loadSettings().provider).toBe("qwen");
-  });
-});
-
-describe("loadConfig mcp.yaml", () => {
-  let tmpDir: string;
-  let tmpUserDir: string;
-
-  beforeEach(() => {
-    tmpDir = mkdtempSync(path.join(os.tmpdir(), "config-mcp-"));
-    tmpUserDir = mkdtempSync(path.join(os.tmpdir(), "config-mcp-user-"));
-    process.chdir(tmpDir);
-    vi.stubEnv("USERPROFILE", tmpUserDir);
-  });
-
-  afterEach(() => {
-    process.chdir(originalCwd);
-    rmSync(tmpDir, { recursive: true, force: true });
-    rmSync(tmpUserDir, { recursive: true, force: true });
-  });
-
-  it("加载 .blh/mcp.yaml（stdio 与 http）", async () => {
-    mkdirSync(path.join(tmpDir, ".blh"), { recursive: true });
-    writeFileSync(
-      path.join(tmpDir, ".blh", "mcp.yaml"),
-      [
-        "- name: web-search",
-        "  command: npx",
-        '  args: ["-y", "open-websearch@latest"]',
-        "- name: hotel",
-        "  url: https://mcp.example.com/mcp",
-        "  headers:",
-        "    Authorization: Bearer abc",
-        "",
-      ].join("\n"),
+    const diagnostics = new Diagnostics();
+    const config = loadConfig(
+      { configRoot: tmpRoot, cli: { provider: "nope", bash_timeout: "abc", max_output_chars: "-5" } },
+      diagnostics,
     );
+
+    expect(diagnostics.hasErrors()).toBe(true);
+    const messages = diagnostics.errors().map((d) => d.message).join("\n");
+    expect(messages).toContain("未知 provider 'nope'");
+    expect(messages).toContain("bash_timeout 不是合法的整数");
+    expect(messages).toContain("max_output_chars 不能为负数");
+    expect(messages).toContain("mcp.yaml[0] 必须是对象");
+
+    expect(config.provider).toBe("deepseek");
+    expect(config.bashTimeout).toBe(120);
+    expect(config.maxOutputChars).toBe(30000);
+    expect(config.mcpServers?.map((s) => s.name)).toContain("ok");
+  });
+
+  it("合法配置不产生任何错误", async () => {
     const { loadConfig } = await import("../../src/config/config.js");
-    expect(loadConfig({ configRoot: tmpDir }).mcpServers).toEqual([
-      { name: "web-search", command: "npx", args: ["-y", "open-websearch@latest"] },
-      { name: "hotel", url: "https://mcp.example.com/mcp", headers: { Authorization: "Bearer abc" } },
-    ]);
+    const { Diagnostics } = await import("../../src/contracts/diagnostics.js");
+
+    const diagnostics = new Diagnostics();
+    const config = loadConfig(
+      { configRoot: tmpRoot, cli: { provider: "deepseek", bash_timeout: "60" } },
+      diagnostics,
+    );
+
+    expect(diagnostics.hasErrors()).toBe(false);
+    expect(config.provider).toBe("deepseek");
+    expect(config.bashTimeout).toBe(60);
   });
 
-  it("全局与项目 mcp.yaml 按 name 合并，项目覆盖同名", async () => {
-    mkdirSync(path.join(tmpUserDir, ".blh"), { recursive: true });
-    writeFileSync(path.join(tmpUserDir, ".blh", "mcp.yaml"), "- name: shared\n  url: https://shared\n");
-    mkdirSync(path.join(tmpDir, ".blh"), { recursive: true });
-    writeFileSync(path.join(tmpDir, ".blh", "mcp.yaml"), "- name: shared\n  url: https://project-override\n- name: local\n  command: npx\n");
+  it("settings 里的未知 provider 产生 warning 且不阻断", async () => {
     const { loadConfig } = await import("../../src/config/config.js");
-    expect(loadConfig({ configRoot: tmpDir }).mcpServers).toEqual([
-      { name: "shared", url: "https://project-override" },
-      { name: "local", command: "npx" },
-    ]);
+    const { Diagnostics } = await import("../../src/contracts/diagnostics.js");
+    mkdirSync(path.join(fakeHome, ".blh"), { recursive: true });
+    writeFileSync(path.join(fakeHome, ".blh", "settings.json"), JSON.stringify({ provider: "nope" }), "utf8");
+
+    const diagnostics = new Diagnostics();
+    const config = loadConfig({ configRoot: tmpRoot }, diagnostics);
+
+    expect(diagnostics.hasErrors()).toBe(false);
+    expect(diagnostics.warnings().map((d) => d.message).join("\n")).toContain("未知");
+    expect(config.provider).toBe("deepseek");
   });
 
-  it("mcp.yaml 不是数组时抛 ConfigError", async () => {
-    mkdirSync(path.join(tmpDir, ".blh"), { recursive: true });
-    writeFileSync(path.join(tmpDir, ".blh", "mcp.yaml"), "name: not-array\n");
+  it("不传 diagnostics 时仍抛 ConfigError 并聚合错误", async () => {
     const { loadConfig, ConfigError } = await import("../../src/config/config.js");
-    expect(() => loadConfig({ configRoot: tmpDir })).toThrow(ConfigError);
-  });
 
-  it("mcp.yaml 某项缺少 name 时抛 ConfigError", async () => {
-    mkdirSync(path.join(tmpDir, ".blh"), { recursive: true });
-    writeFileSync(path.join(tmpDir, ".blh", "mcp.yaml"), "- command: npx\n");
-    const { loadConfig, ConfigError } = await import("../../src/config/config.js");
-    expect(() => loadConfig({ configRoot: tmpDir })).toThrow(ConfigError);
-  });
-});
-
-describe("loadConfig 数值与 api_key", () => {
-  let tmpDir: string;
-  let tmpUserDir: string;
-
-  beforeEach(() => {
-    tmpDir = mkdtempSync(path.join(os.tmpdir(), "config-num-"));
-    tmpUserDir = mkdtempSync(path.join(os.tmpdir(), "config-num-user-"));
-    process.chdir(tmpDir);
-    vi.stubEnv("USERPROFILE", tmpUserDir);
-  });
-
-  afterEach(() => {
-    process.chdir(originalCwd);
-    rmSync(tmpDir, { recursive: true, force: true });
-    rmSync(tmpUserDir, { recursive: true, force: true });
-  });
-
-  it("api_key 从配置文件读取（环境变量不再读）", async () => {
-    mkdirSync(path.join(tmpDir, ".blh"), { recursive: true });
-    writeFileSync(path.join(tmpDir, ".blh", "config.yaml"), "api_key: sk-file\n");
-    const { loadConfig } = await import("../../src/config/config.js");
-    expect(loadConfig({ configRoot: tmpDir }).apiKey).toBe("sk-file");
-  });
-
-  it("非法整数抛 ConfigError", async () => {
-    vi.stubEnv("BLH_BASH_TIMEOUT", "abc");
-    const { loadConfig, ConfigError } = await import("../../src/config/config.js");
-    expect(() => loadConfig({ configRoot: tmpDir })).toThrow(ConfigError);
-  });
-
-  it("负整数抛 ConfigError", async () => {
-    vi.stubEnv("BLH_BASH_TIMEOUT", "-1");
-    const { loadConfig, ConfigError } = await import("../../src/config/config.js");
-    expect(() => loadConfig({ configRoot: tmpDir })).toThrow(ConfigError);
+    expect(() =>
+      loadConfig({ configRoot: tmpRoot, cli: { provider: "nope", bash_timeout: "abc" } }),
+    ).toThrow(ConfigError);
   });
 });

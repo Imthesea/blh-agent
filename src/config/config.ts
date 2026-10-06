@@ -4,10 +4,11 @@ import { readFileSync, statSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { Config, McpServerConfig, ProviderDefinition } from "../contracts/types.js";
+import { Diagnostics } from "../contracts/diagnostics.js";
 import { createLogger } from "@blh/logger";
 import { loadSettings, saveSettings, type Settings } from "./settings.js";
 import { readEnv } from "./env.js";
-import { getProviderDefinition, findFirstConfiguredProvider } from "../providers/catalog.js";
+import { findFirstConfiguredProvider, findProviderDefinition, listProviders } from "../providers/catalog.js";
 
 const log = createLogger("config.config");
 
@@ -75,21 +76,24 @@ function findConfigFiles(start: string, filename: string): string[] {
 
 /**
  * 把值安全地转成非负整数，用于校验 bash_timeout、max_output_chars 等整数配置。
- * 值不是合法整数、或为负数时抛 ConfigError，并带上字段名 key 方便定位。
+ * 值不是合法整数、或为负数时记录一条 error 诊断并回退 fallback，不再抛错，
+ * 这样多个字段的非法值可以在一次启动里全部列出来。
  */
-function toInt(value: unknown, key: string): number {
+function toInt(value: unknown, key: string, fallback: number, diagnostics: Diagnostics): number {
   let number: number;
   if (typeof value === "number" && Number.isInteger(value)) {
     number = value;
   } else {
     const text = String(value).trim();
     if (!/^-?\d+$/.test(text)) {
-      throw new ConfigError(`${key} 不是合法的整数: ${JSON.stringify(value)}`);
+      diagnostics.push({ type: "error", message: `${key} 不是合法的整数: ${JSON.stringify(value)}`, path: key });
+      return fallback;
     }
     number = Number.parseInt(text, 10);
   }
   if (number < 0) {
-    throw new ConfigError(`${key} 不能为负数: ${JSON.stringify(value)}`);
+    diagnostics.push({ type: "error", message: `${key} 不能为负数: ${JSON.stringify(value)}`, path: key });
+    return fallback;
   }
   return number;
 }
@@ -97,20 +101,26 @@ function toInt(value: unknown, key: string): number {
 /**
  * 校验并转换 mcp.yaml 里的原始数据为 McpServerConfig 列表。
  * 期望是一个对象数组，每个对象至少要有 name；command/args/url/headers 按需透传。
- * 结构不对或缺少 name 时抛 ConfigError。
+ * 结构不对或缺少 name 时记录 error 诊断并跳过该项，其余项继续解析。
  */
-function parseMcpServers(value: unknown): McpServerConfig[] {
+function parseMcpServers(value: unknown, diagnostics: Diagnostics): McpServerConfig[] {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) {
-    throw new ConfigError(`mcp.yaml 必须是数组: ${JSON.stringify(value)}`);
+    diagnostics.push({ type: "error", message: `mcp.yaml 必须是数组: ${JSON.stringify(value)}`, path: "mcp.yaml" });
+    return [];
   }
-  return value.map((item, index) => {
+  const servers: McpServerConfig[] = [];
+  value.forEach((item, index) => {
     if (typeof item !== "object" || item === null || Array.isArray(item)) {
-      throw new ConfigError(`mcp.yaml[${index}] 必须是对象`);
+      diagnostics.push({ type: "error", message: `mcp.yaml[${index}] 必须是对象`, path: "mcp.yaml" });
+      return;
     }
     const obj = item as Record<string, unknown>;
     const name = typeof obj.name === "string" ? obj.name : "";
-    if (!name) throw new ConfigError(`mcp.yaml[${index}] 缺少 name`);
+    if (!name) {
+      diagnostics.push({ type: "error", message: `mcp.yaml[${index}] 缺少 name`, path: "mcp.yaml" });
+      return;
+    }
     const server: McpServerConfig = { name };
     if (typeof obj.command === "string") server.command = obj.command;
     if (Array.isArray(obj.args)) server.args = obj.args.map((argument) => String(argument));
@@ -123,20 +133,32 @@ function parseMcpServers(value: unknown): McpServerConfig[] {
         ]),
       );
     }
-    return server;
+    servers.push(server);
   });
+  return servers;
 }
 
 /**
  * 读取并合并所有 mcp.yaml 配置文件里的 MCP 服务器列表。
  * 同名服务器按 name 去重，后读取的（项目级）覆盖先读取的（用户级）。
+ * 文件解析失败记录 error 诊断并跳过该文件。
  */
-function loadMcpServers(start: string): McpServerConfig[] {
+function loadMcpServers(start: string, diagnostics: Diagnostics): McpServerConfig[] {
   const merged = new Map<string, McpServerConfig>();
   for (const filePath of findConfigFiles(start, "mcp.yaml")) {
-    const data: unknown = parseYaml(readFileSync(filePath, "utf8"));
+    let data: unknown;
+    try {
+      data = parseYaml(readFileSync(filePath, "utf8"));
+    } catch (error) {
+      diagnostics.push({
+        type: "error",
+        message: `无法解析 ${filePath}: ${error instanceof Error ? error.message : String(error)}`,
+        path: filePath,
+      });
+      continue;
+    }
     if (data === null || data === undefined) continue;
-    for (const server of parseMcpServers(data)) merged.set(server.name, server);
+    for (const server of parseMcpServers(data, diagnostics)) merged.set(server.name, server);
   }
   return [...merged.values()];
 }
@@ -160,8 +182,13 @@ function stringOrUndefined(value: unknown): string | undefined {
  * 关键语义：
  *   - configRoot：配置发现根目录，.env / .blh/config.yaml / .blh/mcp.yaml 都从这里向上查找；
  *   - workdir：运行数据目录，记忆、任务、日志等运行产物写到这里（默认等于 configRoot）。
+ *
+ * 诊断语义：
+ *   - 传入 diagnostics 时：所有问题聚合进收集器，函数返回带兜底值的 Config，不抛错；由调用方决定是否阻断。
+ *   - 不传 diagnostics 时（向后兼容）：仍以抛 ConfigError 的方式阻断，并把全部 error 聚合进一条消息。
  */
-export function loadConfig(options: LoadConfigOptions): Config {
+export function loadConfig(options: LoadConfigOptions, externalDiagnostics?: Diagnostics): Config {
+  const diagnostics = externalDiagnostics ?? new Diagnostics();
   const configRoot = path.resolve(options.configRoot);
   const runtimeWorkdir = path.resolve(options.workdir ?? configRoot);
   const dotenv = findDotenv(configRoot);
@@ -173,16 +200,27 @@ export function loadConfig(options: LoadConfigOptions): Config {
   const fileValues: Record<string, unknown> = {};
   const configFiles = findConfigFiles(configRoot, "config.yaml");
   for (const filePath of configFiles) {
-    const data: unknown = parseYaml(readFileSync(filePath, "utf8"));
+    let data: unknown;
+    try {
+      data = parseYaml(readFileSync(filePath, "utf8"));
+    } catch (error) {
+      diagnostics.push({
+        type: "error",
+        message: `无法解析 ${filePath}: ${error instanceof Error ? error.message : String(error)}`,
+        path: filePath,
+      });
+      continue;
+    }
     if (data === null || data === undefined) continue;
     if (typeof data !== "object" || Array.isArray(data)) {
-      throw new ConfigError(`配置文件 ${filePath} 必须是一个键值对映射`);
+      diagnostics.push({ type: "error", message: `配置文件 ${filePath} 必须是一个键值对映射`, path: filePath });
+      continue;
     }
     Object.assign(fileValues, data);
   }
   log.debug("配置已加载", { files: configFiles });
 
-  const mcpServers = loadMcpServers(configRoot);
+  const mcpServers = loadMcpServers(configRoot, diagnostics);
   const explicitProvider =
     stringOrUndefined(cliValues.provider) ??
     readEnv("BLH_PROVIDER") ??
@@ -190,14 +228,31 @@ export function loadConfig(options: LoadConfigOptions): Config {
   const settings = loadSettings();
   let providerId = explicitProvider;
   if (!providerId && settings.provider) {
-    try {
-      if (providerHasKey(getProviderDefinition(settings.provider))) providerId = settings.provider;
-    } catch {
+    const settingsDef = findProviderDefinition(settings.provider);
+    if (settingsDef) {
+      if (providerHasKey(settingsDef)) providerId = settings.provider;
+    } else {
+      diagnostics.push({
+        type: "warning",
+        message: `settings 里的 provider '${settings.provider}' 未知，已忽略`,
+        path: "provider",
+      });
     }
   }
   if (!providerId) providerId = findFirstConfiguredProvider()?.id;
   if (!providerId) providerId = "deepseek";
-  const def = getProviderDefinition(providerId);
+
+  let def = findProviderDefinition(providerId);
+  if (!def) {
+    diagnostics.push({
+      type: "error",
+      message: `未知 provider '${providerId}'（可用：${listProviders().join(", ")}）`,
+      path: "provider",
+    });
+    // 用兜底 provider 继续加载其余字段，保证一次启动能收集齐所有错误。
+    def = findProviderDefinition("deepseek")!;
+    providerId = "deepseek";
+  }
 
   const explicitModel =
     stringOrUndefined(cliValues.model) ??
@@ -216,7 +271,7 @@ export function loadConfig(options: LoadConfigOptions): Config {
 
   if (explicitProvider || explicitModel) {
     const nextSettings: Settings = { ...settings };
-    if (explicitProvider) {
+    if (explicitProvider && findProviderDefinition(explicitProvider)) {
       nextSettings.provider = explicitProvider;
       if (!explicitModel) delete nextSettings.model;
     }
@@ -230,6 +285,8 @@ export function loadConfig(options: LoadConfigOptions): Config {
       fileValues.bash_timeout ??
       120,
     "bash_timeout",
+    120,
+    diagnostics,
   );
   const maxOutputChars = toInt(
     cliValues.max_output_chars ??
@@ -237,9 +294,11 @@ export function loadConfig(options: LoadConfigOptions): Config {
       fileValues.max_output_chars ??
       30000,
     "max_output_chars",
+    30000,
+    diagnostics,
   );
 
-  return {
+  const config: Config = {
     apiKey,
     ...(baseUrl ? { baseUrl } : {}),
     model,
@@ -249,4 +308,11 @@ export function loadConfig(options: LoadConfigOptions): Config {
     maxOutputChars,
     mcpServers,
   };
+
+  // 向后兼容：未显式传入收集器时，仍以抛错方式阻断，并聚合全部错误。
+  if (externalDiagnostics === undefined && diagnostics.hasErrors()) {
+    throw new ConfigError(diagnostics.errors().map((item) => item.message).join("; "));
+  }
+
+  return config;
 }

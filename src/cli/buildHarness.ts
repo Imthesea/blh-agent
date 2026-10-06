@@ -1,6 +1,7 @@
 import * as path from "node:path";
 import { LifecycleManager } from "@blh/lifecycle";
 import { loadConfig } from "../config/config.js";
+import { Diagnostics } from "../contracts/diagnostics.js";
 import { ContextCompactor } from "../compaction/compactor.js";
 import { registerCompactTool } from "../compaction/compactTool.js";
 import { Harness } from "../runtime/harness.js";
@@ -85,18 +86,35 @@ export function buildHarness(
   },
 ): Harness {
   const lifecycle = new LifecycleManager();
-  const config = loadConfig({
-    configRoot: process.cwd(),
-    ...(workdir !== undefined ? { workdir } : {}),
-    ...(cli !== undefined ? { cli } : {}),
-  });
+  const diagnostics = new Diagnostics();
+  const config = loadConfig(
+    {
+      configRoot: process.cwd(),
+      ...(workdir !== undefined ? { workdir } : {}),
+      ...(cli !== undefined ? { cli } : {}),
+    },
+    diagnostics,
+  );
   // 初始化日志系统：让后续所有日志都写入工作目录下统一管理。
   initLogger(config.workdir);
   // 创建 tracer：全链路事件落盘到 <workdir>/.blh/traces，失败静默不影响主流程。
   const tracer = new Tracer(config.workdir);
 
   // 创建模型提供者：按 config.provider 走对应厂商适配器（这是所有「用模型」能力的底层）。
-  const provider = createProvider(config);
+  const provider = createProvider(config, diagnostics);
+
+  // 统一上报启动诊断：错误阻断启动，警告仅提示。
+  if (diagnostics.hasErrors()) {
+    for (const diagnostic of diagnostics.errors()) {
+      if (diagnostic.path !== undefined) log.error(diagnostic.message, { path: diagnostic.path });
+      else log.error(diagnostic.message);
+    }
+    throw new Error(`配置加载失败，共 ${diagnostics.errors().length} 个错误`);
+  }
+  for (const diagnostic of diagnostics.warnings()) {
+    if (diagnostic.path !== undefined) log.warn(diagnostic.message, { path: diagnostic.path });
+    else log.warn(diagnostic.message);
+  }
 
   // 创建工具注册表：集中登记所有可供模型调用的工具。
   const tools = new ToolRegistry();
