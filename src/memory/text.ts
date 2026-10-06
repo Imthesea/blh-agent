@@ -1,4 +1,4 @@
-import type { ChatMessage } from "../core/types.js";
+import type { ChatMessage } from "../contracts/types.js";
 
 export function messageText(message: ChatMessage): string {
   const content = message.content;

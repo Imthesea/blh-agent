@@ -258,6 +258,36 @@ describe("MCPClient", () => {
     }
   });
 
+  it("cancel makes the client reject later requests", async () => {
+    const client = startClient();
+    try {
+      await client.start();
+      client.cancel();
+      await expect(client.listTools()).rejects.toThrow("MCP client is cancelled");
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("forceClose upgrades a hanging graceful close", async () => {
+    const transport = new StdioTransport(
+      process.execPath,
+      ["-e", "process.stdin.resume(); setInterval(() => {}, 1000);"],
+      "hanging",
+    );
+    const disconnects: string[] = [];
+    transport.onDisconnect((error) => disconnects.push(error.message));
+
+    await transport.start();
+    const gracefulClose = transport.close();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await transport.forceClose();
+    await gracefulClose;
+
+    expect(disconnects).toHaveLength(1);
+    expect(disconnects[0]).toContain("hanging");
+  });
+
   it("start_rejects_when_command_does_not_exist", async () => {
     const client = new MCPClient("x", new StdioTransport("definitely-not-a-real-cmd-xyz"));
     await expect(client.start()).rejects.toThrow();
@@ -438,6 +468,74 @@ describe("MCPClient over HTTP", () => {
       await server.close();
     }
   });
+
+  it("aborting a tool call rejects the pending request", async () => {
+    const server = await startHttpServer(async (req, res) => {
+      const body = (await readBody(req)) as { id?: number; method?: string };
+      if (body.method === "server/discover") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: body.id,
+            result: { supportedVersions: ["2026-07-28"], capabilities: { tools: {} } },
+          }),
+        );
+        return;
+      }
+      setTimeout(() => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: body.id,
+            result: { content: [{ type: "text", text: "late" }] },
+          }),
+        );
+      }, 5000);
+    });
+    const client = new MCPClient("http-slow", new HttpTransport(server.url, {}, 30000));
+    const controller = new AbortController();
+    try {
+      await client.start();
+      const call = client.callTool("search", { query: "x" }, controller.signal);
+      setTimeout(() => controller.abort(), 20);
+      await expect(call).rejects.toThrow("MCP request cancelled");
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("close fails pending requests", async () => {
+    const server = await startHttpServer(async (req, res) => {
+      const body = (await readBody(req)) as { id?: number; method?: string };
+      if (body.method === "server/discover") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: body.id,
+            result: { supportedVersions: ["2026-07-28"], capabilities: { tools: {} } },
+          }),
+        );
+        return;
+      }
+      setTimeout(() => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ jsonrpc: "2.0", id: body.id, result: { tools: [] } }));
+      }, 5000);
+    });
+    const client = new MCPClient("http-pending", new HttpTransport(server.url, {}, 30000));
+    try {
+      await client.start();
+      const call = client.listTools();
+      await client.close();
+      await expect(call).rejects.toThrow("MCP client closed");
+    } finally {
+      await server.close();
+    }
+  });
 });
 
 describe("normalizeMcpName", () => {
@@ -506,6 +604,52 @@ describe("MCPRegistry", () => {
     await expect(mcp.closeAll()).rejects.toThrow("boom");
     expect(failingClosed).toBe(true);
     expect(workingClosed).toBe(true);
+  });
+
+  it("closeAll(true) upgrades an in-flight graceful close", async () => {
+    const mcp = new MCPRegistry(new ToolRegistry(), ".");
+    const clients = (mcp as unknown as {
+      clients: Map<string, Pick<MCPClient, "close" | "forceClose">>;
+    }).clients;
+    let forced = false;
+    let resolveGraceful: (() => void) | undefined;
+    clients.set("slow", {
+      close: () =>
+        new Promise<void>((resolve) => {
+          resolveGraceful = resolve;
+        }),
+      forceClose: async () => {
+        forced = true;
+        resolveGraceful?.();
+      },
+    });
+
+    const graceful = mcp.closeAll();
+    await mcp.closeAll(true);
+
+    expect(forced).toBe(true);
+    await graceful;
+  });
+
+  it("closeAll force-disposes an in-flight connection and rejects later connects", async () => {
+    const server = await startHttpServer(async (req, res) => {
+      await readBody(req);
+      setTimeout(() => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { tools: [] } }));
+      }, 5000);
+    });
+    const registry = new ToolRegistry();
+    const mcp = new MCPRegistry(registry, ".");
+    const connecting = mcp.connectHttp("slow", server.url, {}, new AbortController().signal);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await mcp.closeAll(true);
+    expect(await connecting).toContain("failed to connect MCP server");
+    expect(mcp.systemPromptSection()).toBe("");
+    expect(await mcp.connect("later", process.execPath, ["-e", SERVER_CODE])).toContain(
+      "MCP registry is closed",
+    );
+    await server.close();
   });
 
   it("connect_http_registers_prefixed_tools", async () => {

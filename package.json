@@ -30,7 +30,7 @@
     "build:web": "pnpm --filter @blh/web build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "lint": "eslint .",
+    "lint": "eslint . && node scripts/check-architecture.mjs",
     "dev": "tsx src/cli/main.ts",
     "dev:yes": "tsx src/cli/main.ts --dangerously-skip-permissions",
     "web:server": "tsx src/cli/main.ts web --dev",
@@ -39,6 +39,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.128.0",
+    "@blh/lifecycle": "workspace:*",
     "@blh/logger": "workspace:*",
     "@blh/web-server": "workspace:*",
     "dotenv": "^16.0.0",

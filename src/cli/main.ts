@@ -4,9 +4,9 @@ import readline from "node:readline";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { lastAssistantText } from "../core/loop.js";
+import { lastAssistantText } from "../runtime/loop.js";
 import { repl, makeReadlineIO } from "./repl.js";
-import type { ChatMessage } from "../core/types.js";
+import type { ChatMessage } from "../contracts/types.js";
 import { SessionStore } from "../session/store.js";
 import { createLogger } from "@blh/logger";
 import type { ApprovalAsker, ApprovalDecision } from "../security/approval.js";
@@ -151,7 +151,7 @@ const USAGE = `用法: blh [-h] [-p 提示词] [--provider 厂商] [--model 模�
   -p, --print 提示词      跑一次单个提示词并打印回复
   --model 模型            模型名（覆盖 OPENAI_MODEL）
   --base-url 基础地址     OpenAI 兼容的基础地址（覆盖 OPENAI_BASE_URL）
-  --workdir 工作目录       工作目录
+  --workdir 工作目录       运行工作目录（不改变配置发现目录）
   --bash-timeout N        bash 超时秒数
   --max-output-chars N    最大捕获输出字符数
   --dangerously-skip-permissions
@@ -191,6 +191,20 @@ async function main(): Promise<void> {
     if (!dev) {
       openBrowser(server.url);
     }
+    let closing = false;
+    const closeForSignal = () => {
+      if (closing) return;
+      closing = true;
+      void server
+        .close()
+        .then(() => process.exit(0))
+        .catch((error: unknown) => {
+          log.error("web 服务器关闭失败", {}, error);
+          process.exit(1);
+        });
+    };
+    process.once("SIGINT", closeForSignal);
+    process.once("SIGTERM", closeForSignal);
     return;
   }
 
@@ -207,10 +221,14 @@ async function main(): Promise<void> {
     log.info("启动", { workdir: harness.config.workdir, model: harness.config.model });
     // 新建一个只含 system 消息的会话。
     const messages = harness.newSession();
-    // 把用户提示词当一轮输入跑一遍（内部会反复调用模型直到不再要工具）。
-    await harness.runTurn(messages, prompt);
-    // 打印最后一条 assistant 回复。
-    console.log(lastAssistantText(messages));
+    try {
+      // 把用户提示词当一轮输入跑一遍（内部会反复调用模型直到不再要工具）。
+      await harness.runTurn(messages, prompt);
+      // 打印最后一条 assistant 回复。
+      console.log(lastAssistantText(messages));
+    } finally {
+      await harness.dispose();
+    }
     return;
   }
 
@@ -224,17 +242,15 @@ async function main(): Promise<void> {
   const harness = buildHarness(workdir, cli, makeAskUser(rl), skipPermissions);
   log.info("启动 REPL", { workdir: harness.config.workdir, model: harness.config.model });
 
-  let messages: ChatMessage[];
+  try {
+    let messages: ChatMessage[];
   if (doContinue) {
     // 继续旧会话：--continue 给了文件名就用它，否则找最近一次存档的会话。
     const file = continueFile
       ? path.join(harness.config.workdir, ".sessions", continueFile)
       : SessionStore.latest(harness.config.workdir);
     // 没找到可继续的会话，报错退出。
-    if (!file) {
-      log.error("没有找到可继续的会话");
-      process.exit(1);
-    }
+    if (!file) throw new Error("没有找到可继续的会话");
     // 打开这个存档文件，后续新消息会往里追加。
     harness.sessionStore = SessionStore.open(file);
     // 先建 system 消息，再把历史消息一条条塞回来。
@@ -247,6 +263,10 @@ async function main(): Promise<void> {
   }
   // 进入交互循环：不断读用户输入、跑 agent、打印结果，直到用户退出。
   await repl(harness, makeReadlineIO(rl), messages);
+  } finally {
+    rl.close();
+    await harness.dispose();
+  }
 }
 
 /** 判断这个文件是不是被直接运行（比如 node main.js），而不是被别的文件 import。

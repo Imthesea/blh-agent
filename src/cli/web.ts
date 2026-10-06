@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { startWebServer, type BuildHarness } from "@blh/web-server";
 import { buildHarness } from "./buildHarness.js";
-import { loadConfig } from "../core/config.js";
+import { loadConfig } from "../config/config.js";
 import { SessionStore } from "../session/store.js";
 import { createTraceModule } from "../tracing/module.js";
 
@@ -36,7 +36,11 @@ export interface StartWebFromCliOptions {
 
 /** CLI 入口的 web 启动封装：解析 workdir 并注入根包依赖后交给 @blh/web-server。 */
 export function startWebServerFromCli(options: StartWebFromCliOptions) {
-  const config = loadConfig(options.workdir, options.cli);
+  const config = loadConfig({
+    configRoot: process.cwd(),
+    ...(options.workdir !== undefined ? { workdir: options.workdir } : {}),
+    cli: options.cli,
+  });
   return startWebServer({
     workdir: config.workdir,
     cli: options.cli,

@@ -32,6 +32,8 @@ export const DREAM_PROMPT = [
 type DreamState = { lastAttempt: number; lastSuccess: number };
 
 export class MemoryDream {
+  readonly prompt = DREAM_PROMPT;
+
   constructor(private readonly store: MemoryStore) {}
 
   private statePath(): string {
@@ -66,6 +68,27 @@ export class MemoryDream {
     if (this.store.listMemoryFiles().length < DREAM_MIN_RECORDS) return false;
     const state = this.readState();
     return now - state.lastSuccess >= DREAM_INTERVAL_MS && now - state.lastAttempt >= DREAM_RETRY_MS;
+  }
+
+  snapshot(): Record<string, string> {
+    return snapshotMemoryFiles(this.store);
+  }
+
+  restore(snapshot: Record<string, string>): void {
+    restoreMemorySnapshot(this.store, snapshot);
+  }
+
+  applyTrash(): void {
+    applyDreamTrash(this.store);
+    this.store.rebuildMemoryIndex();
+  }
+
+  clearTrash(): void {
+    clearDreamTrash(this.store);
+  }
+
+  validateOutput(): void {
+    validateDreamOutput(this.store);
   }
 }
 

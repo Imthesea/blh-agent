@@ -24,7 +24,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { parseArgs } from "node:util";
 import { buildHarness } from "../src/cli/buildHarness.js";
-import { lastAssistantText } from "../src/core/loop.js";
+import { lastAssistantText } from "../src/runtime/loop.js";
 
 /** SWE-bench 数据集里我们用到的字段。 */
 interface SweInstance {

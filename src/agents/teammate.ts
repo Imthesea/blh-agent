@@ -1,12 +1,14 @@
-import { POST_TOOL_USE, PRE_TOOL_USE } from "../core/hooks.js";
-import type { HookBus } from "../core/hooks.js";
-import { parseToolArguments } from "../core/parse-args.js";
-import type { ChatMessage, ChatProvider, Config, ToolCall } from "../core/types.js";
+import { POST_TOOL_USE, PRE_TOOL_USE } from "../contracts/hooks.js";
+import type { HookBus } from "../runtime/hooks.js";
+import type { ChatMessage, ChatProvider, Config } from "../contracts/types.js";
+import { runAgentLoop } from "../runtime/loop.js";
+import type { AgentLoopRuntime } from "../runtime/ports.js";
 import { runInScheduledTurn } from "../security/approval.js";
 import { runBash } from "../tools/bash.js";
 import { editFile, readFile, writeFile } from "../tools/files.js";
 import { glob } from "../tools/glob.js";
 import { ToolRegistry } from "../tools/registry.js";
+import type { Tracer } from "../tracing/tracer.js";
 import type { BusMessage } from "./bus.js";
 import type { Task, TaskStore } from "../planning/tasks.js";
 
@@ -34,7 +36,11 @@ export interface TeammateTeam {
   finishTeammate(name: string): void;
   claimNextTask(name: string): Task | null;
   readInbox(name: string): BusMessage[];
-  waitForMessages(name: string, timeoutMs?: number): Promise<BusMessage[]>;
+  waitForMessages(
+    name: string,
+    timeoutMs?: number,
+    signal?: AbortSignal,
+  ): Promise<BusMessage[]>;
 }
 
 const ICONS: Record<string, string> = { pending: "[ ]", in_progress: "[~]", completed: "[x]" };
@@ -42,7 +48,8 @@ const ICONS: Record<string, string> = { pending: "[ ]", in_progress: "[~]", comp
 export class TeammateRuntime {
   readonly tools: ToolRegistry;
   readonly messages: ChatMessage[];
-  private readonly system: string;
+  readonly systemPrompt: string;
+  private readonly loopTracer: Tracer | undefined;
 
   /**
    * 构造函数：创建一个"队友"的运行器。
@@ -65,8 +72,10 @@ export class TeammateRuntime {
     readonly hooks: HookBus,
     readonly store: TaskStore,
     readonly team: TeammateTeam,
+    tracer?: Tracer,
   ) {
-    this.system =
+    this.loopTracer = tracer?.scoped(`teammate:${name}`);
+    this.systemPrompt =
       `你是 '${name}'，一名 ${role}。用工具完成分配给你的任务，` +
       "完成后调用 complete_task 并报告一个简洁的结果。 " +
       "如果第一条用户消息里包含 [Assigned task]，说明这个任务已经被认领了，不要再调用 claim_task。 " +
@@ -85,7 +94,7 @@ export class TeammateRuntime {
         "\n\n[Plan required] Submit a plan and wait for Lead approval before changing files or using bash.";
     }
     this.messages = [
-      { role: "system", content: this.system },
+      { role: "system", content: this.systemPrompt },
       { role: "user", content: userContent },
     ];
     this.tools = this.buildTools();
@@ -215,10 +224,19 @@ export class TeammateRuntime {
    * 先拿到工作目录，拿不到就直接返回错误信息，不去执行命令；
    * 拿得到就把命令交给 runBash 函数去执行，并带上超时时间、输出长度上限这些配置。
    */
-  private async runBash(args: Record<string, unknown>): Promise<string> {
+  private async runBash(
+    args: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<string> {
     const current = this.currentCwd();
     if ("error" in current) return current.error;
-    return runBash(current.cwd, this.config.bashTimeout, this.config.maxOutputChars, args);
+    return runBash(
+      current.cwd,
+      this.config.bashTimeout,
+      this.config.maxOutputChars,
+      args,
+      signal,
+    );
   }
 
   /**
@@ -300,7 +318,11 @@ export class TeammateRuntime {
    *
    * 都通过之后，才真正执行工具并返回结果。
    */
-  private async runTool(event: { name: string; input: Record<string, unknown> }): Promise<string> {
+  private async runTool(
+    event: { name: string; input: Record<string, unknown> },
+    signal?: AbortSignal,
+  ): Promise<string> {
+    if (signal?.aborted) return "Teammate cancelled.";
     const name = event.name;
     const gate = this.team.getPlanGate(this.name);
     if (
@@ -313,7 +335,7 @@ export class TeammateRuntime {
     return runInScheduledTurn(async () => {
       const blocked = await this.hooks.firstBlock(PRE_TOOL_USE, { name, input: event.input });
       if (blocked !== null) return blocked;
-      const result = await this.tools.dispatch(name, event.input);
+      const result = await this.tools.dispatch(name, event.input, signal);
       await this.hooks.trigger(POST_TOOL_USE, { name, input: event.input, output: result });
       return result;
     });
@@ -374,9 +396,10 @@ export class TeammateRuntime {
    *
    * 每轮循环之间会等待一小段时间（IDLE_SCAN_INTERVAL），避免空转太频繁。
    */
-  async waitForWork(): Promise<boolean> {
+  async waitForWork(signal?: AbortSignal): Promise<boolean> {
     for (;;) {
-      const inbox = await this.team.waitForMessages(this.name, IDLE_SCAN_INTERVAL);
+      if (signal?.aborted) return false;
+      const inbox = await this.team.waitForMessages(this.name, IDLE_SCAN_INTERVAL, signal);
       if (inbox.length > 0) {
         const before = this.messages.length;
         if (this.handleInbox(inbox)) return false;
@@ -385,6 +408,7 @@ export class TeammateRuntime {
       }
       const task = this.team.claimNextTask(this.name);
       if (!task) continue;
+      if (signal?.aborted) return false;
       const cwd = this.team.assignmentCwd(this.name);
       this.messages.push({
         role: "user",
@@ -408,13 +432,38 @@ export class TeammateRuntime {
    *    - 如果计划在等审批，就把自己标成"等待审批"。
    *    - 否则汇报结果给 lead，释放任务，标成"空闲"，返回 "idle"。
    */
-  async work(): Promise<string> {
+  async work(signal?: AbortSignal): Promise<string> {
+    if (signal?.aborted) return "stop";
     if (this.handleInbox(this.team.readInbox(this.name))) return "stop";
     this.team.setActive(this.name, "working");
-    let assistant: ChatMessage;
+    const runtime: AgentLoopRuntime = {
+      systemPrompt: this.systemPrompt,
+      config: this.config,
+      provider: this.provider,
+      tools: this.tools,
+      hooks: this.hooks,
+      tracer: this.loopTracer,
+    };
+    let assistant: ChatMessage | null;
     try {
-      assistant = await this.provider.chat(this.messages, this.tools.list());
+      const result = await runAgentLoop(
+        runtime,
+        this.messages,
+        `[teammate:${this.name}]`,
+        undefined,
+        signal,
+        {
+          maxTurns: 1,
+          dispatchTool: ({ call, input }) =>
+            this.runTool({ name: call.function.name, input }, signal),
+        },
+      );
+      if (result.status === "cancelled") return "stop";
+      if (result.status === "max_turns") return "continue";
+      assistant = result.finalAssistant;
+      if (assistant === null) return "continue";
     } catch (error) {
+      if (signal?.aborted) return "stop";
       this.team.sendMessage(
         this.name,
         "lead",
@@ -422,17 +471,6 @@ export class TeammateRuntime {
         "error",
       );
       return "stop";
-    }
-    this.messages.push(assistant);
-    const toolCalls: ToolCall[] = assistant.tool_calls ?? [];
-    if (toolCalls.length > 0) {
-      for (const call of toolCalls) {
-        const name = call.function.name;
-        const input = parseToolArguments(call.function.arguments);
-        const result = await this.runTool({ name, input });
-        this.messages.push({ role: "tool", tool_call_id: call.id, content: result });
-      }
-      return "continue";
     }
     const summary = assistant.content ?? "";
     const gate = this.team.getPlanGate(this.name);
@@ -468,12 +506,13 @@ export class TeammateRuntime {
    * 不管最后是怎么结束的，都会走 finally 里的收尾清理（finishTeammate），
    * 保证这个队友留下的状态被清干净。
    */
-  async run(): Promise<void> {
+  async run(signal?: AbortSignal): Promise<void> {
     try {
       let state = "continue";
       while (state !== "stop") {
-        if (state === "idle" && !(await this.waitForWork())) break;
-        state = await this.work();
+        if (signal?.aborted) break;
+        if (state === "idle" && !(await this.waitForWork(signal))) break;
+        state = await this.work(signal);
       }
     } catch (error) {
       try {

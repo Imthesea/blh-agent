@@ -70,7 +70,7 @@ pnpm dev
 ### 3. 单次对话(`-p`)
 
 ```powershell
-pnpm dev -- -p "解释 src/core/config.ts 的作用"
+pnpm dev -- -p "解释 src/config/config.ts 的作用"
 ```
 
 ### 4. Web 工作台
@@ -158,7 +158,7 @@ blh web [--port N] [--dev] [--workdir 目录]
 | `api_key` | (见厂商 key) | — | 无(缺失则退出) |
 | `base_url` | `OPENAI_BASE_URL` | `--base-url` | 厂商默认 |
 | `model` | `OPENAI_MODEL` | `--model` | 厂商 defaultModel(deepseek-chat) |
-| `workdir` | — | `--workdir` | 当前目录 |
+| `workdir` | — | `--workdir` | 当前目录;仅决定运行数据目录,不改变配置发现目录 |
 | `bash_timeout` | `BLH_BASH_TIMEOUT` | `--bash-timeout` | `120` |
 | `max_output_chars` | `BLH_MAX_OUTPUT_CHARS` | `--max-output-chars` | `30000` |
 
@@ -168,6 +168,8 @@ blh web [--port N] [--dev] [--workdir 目录]
 
 - 用户级:`~/.blh/config.yaml`
 - 项目级:`.blh/config.yaml`(从当前目录向上查找第一个)
+
+项目级配置与 `.env` 都从启动目录开始查找;`--workdir` 只决定运行数据的落盘位置,不会改变配置发现目录。
 
 两个文件均存在时,用户级先读、项目级后读,后读覆盖先读。YAML 使用 snake_case 键名:
 

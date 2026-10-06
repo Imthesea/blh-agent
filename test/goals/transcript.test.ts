@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { plainContent, transcriptText } from "../../src/goals/transcript.js";
-import type { ChatMessage } from "../../src/core/types.js";
+import type { ChatMessage } from "../../src/contracts/types.js";
 
 describe("transcript", () => {
   it("plain assistant with tool calls", () => {

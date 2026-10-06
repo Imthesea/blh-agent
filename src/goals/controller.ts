@@ -1,9 +1,8 @@
 /** GoalController:session 级 goal + Stop hook 决策(异步评估)。 */
-import type { ChatMessage } from "../core/types.js";
+import type { ChatMessage } from "../contracts/types.js";
 import type { GoalEvaluator } from "./evaluator.js";
-import { GoalError, type GoalState, type StopDecision } from "./types.js";
-
-export const CLEAR_ALIASES = new Set(["clear", "stop", "off", "reset", "none", "cancel"]);
+import type { StopDecision } from "../contracts/goals.js";
+import { GoalError, type GoalState } from "./types.js";
 const MAX_GOAL_LENGTH = 4000;
 const DEFAULT_STOP_HOOK_BLOCK_CAP = 8;
 

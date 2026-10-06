@@ -3,8 +3,9 @@ import readline from "node:readline";
 import { describe, it, expect, vi } from "vitest";
 import { createLogger } from "@blh/logger";
 import { repl, makeReadlineIO } from "../../src/cli/repl.js";
-import { Harness } from "../../src/core/harness.js";
-import { HookBus, PRE_TOOL_USE } from "../../src/core/hooks.js";
+import { Harness } from "../../src/runtime/harness.js";
+import { HookBus } from "../../src/runtime/hooks.js";
+import { PRE_TOOL_USE } from "../../src/contracts/hooks.js";
 import { ToolRegistry } from "../../src/tools/registry.js";
 import { registerBuiltinTools } from "../../src/tools/index.js";
 import { makePermissionHook, type ApprovalAsker, type ApprovalDecision } from "../../src/security/approval.js";
@@ -14,7 +15,7 @@ import {
   makeTextMessage,
   makeToolCallMessage,
 } from "../integration/helpers.js";
-import type { Config } from "../../src/core/types.js";
+import type { Config } from "../../src/contracts/types.js";
 
 const config: Config = {
   apiKey: "k",

@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import { getEventListeners } from "node:events";
 import os from "node:os";
 import path from "node:path";
+import { removeDirWithRetries } from "../helpers/fs.js";
 
 let dir: string;
 
@@ -11,7 +12,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await fs.rm(dir, { recursive: true, force: true });
+  await removeDirWithRetries(dir);
 });
 
 async function runScript(script: string, timeout = 120, maxOutputChars = 30000) {

@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import * as path from "node:path";
-import type { ChatMessage, ChatProvider } from "../core/types.js";
+import type { ChatMessage, ChatProvider } from "../contracts/types.js";
 import { createLogger } from "@blh/logger";
 import type { Tracer } from "../tracing/tracer.js";
 

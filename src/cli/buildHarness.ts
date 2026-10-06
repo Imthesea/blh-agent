@@ -1,9 +1,11 @@
 import * as path from "node:path";
-import { loadConfig } from "../core/config.js";
+import { LifecycleManager } from "@blh/lifecycle";
+import { loadConfig } from "../config/config.js";
 import { ContextCompactor } from "../compaction/compactor.js";
 import { registerCompactTool } from "../compaction/compactTool.js";
-import { Harness } from "../core/harness.js";
-import { HookBus, PRE_TOOL_USE } from "../core/hooks.js";
+import { Harness } from "../runtime/harness.js";
+import { HookBus } from "../runtime/hooks.js";
+import { PRE_TOOL_USE } from "../contracts/hooks.js";
 import { createProvider } from "../providers/registry.js";
 import { ToolRegistry } from "../tools/registry.js";
 import { registerBuiltinTools } from "../tools/index.js";
@@ -29,7 +31,7 @@ import { TeamRuntime } from "../agents/team.js";
 import { registerAgentTools } from "../agents/tools.js";
 import { SkillLoader } from "../extensions/skills.js";
 import { MCPRegistry } from "../extensions/mcp.js";
-import type { McpServerConfig } from "../core/types.js";
+import type { McpServerConfig } from "../contracts/types.js";
 import { registerExtensionTools } from "../extensions/tools.js";
 import { Extensions } from "../extensions/index.js";
 import { PromptGoalEvaluator } from "../goals/evaluator.js";
@@ -43,11 +45,15 @@ import { Tracer } from "../tracing/tracer.js";
 const log = createLogger("cli.buildHarness");
 
 /** 连接配置里声明的一个 MCP 服务器，把结果打到日志里（供启动时后台自动连接使用）。 */
-async function connectConfiguredMcp(mcp: MCPRegistry, server: McpServerConfig): Promise<void> {
+async function connectConfiguredMcp(
+  mcp: MCPRegistry,
+  server: McpServerConfig,
+  signal?: AbortSignal,
+): Promise<void> {
   const result = server.url
-    ? await mcp.connectHttp(server.name, server.url, server.headers)
+    ? await mcp.connectHttp(server.name, server.url, server.headers, signal)
     : server.command
-      ? await mcp.connect(server.name, server.command, server.args)
+      ? await mcp.connect(server.name, server.command, server.args, signal)
       : `Error: MCP server '${server.name}' has neither url nor command`;
   log.info(result);
 }
@@ -55,11 +61,11 @@ async function connectConfiguredMcp(mcp: MCPRegistry, server: McpServerConfig): 
 /**
  * 构建一个完整的 Harness（运行核心），把 CLI 用到的所有子系统按依赖顺序组装起来。
  *
- * 一句话概括：这个函数是「装配车间」，先创建底层依赖（配置、日志、模型、工具、权限），
+ * 这个函数是「装配车间」，先创建底层依赖（配置、日志、模型、工具、权限），
  * 再依次创建规划、记忆、定时任务、压缩、多智能体、扩展、工作流、目标等子系统，
  * 最后把它们全部塞进 Harness 返回。
  *
- * @param workdir 工作目录（可选）。决定配置、记忆、任务等文件都落在哪个目录下。
+ * @param workdir 运行工作目录（可选）。决定记忆、任务、日志等运行数据落盘位置；配置发现仍从当前目录开始。
  * @param cli 来自命令行的配置覆盖项（可选）。用于覆盖默认配置，比如模型名、超时时间等。
  * @param askUser 权限审批回调（可选）。当某次工具调用需要用户确认时，用这个回调询问用户。
  * @param skipPermissions 是否跳过所有权限检查（默认 false）。为 true 时使用「全部放行」的规则集。
@@ -78,8 +84,12 @@ export function buildHarness(
     approvalSource?: "cli" | "web";
   },
 ): Harness {
-  // 加载配置：合并工作目录、CLI 参数等，得到一份统一配置。
-  const config = loadConfig(workdir, cli);
+  const lifecycle = new LifecycleManager();
+  const config = loadConfig({
+    configRoot: process.cwd(),
+    ...(workdir !== undefined ? { workdir } : {}),
+    ...(cli !== undefined ? { cli } : {}),
+  });
   // 初始化日志系统：让后续所有日志都写入工作目录下统一管理。
   initLogger(config.workdir);
   // 创建 tracer：全链路事件落盘到 <workdir>/.blh/traces，失败静默不影响主流程。
@@ -150,6 +160,7 @@ export function buildHarness(
     provider,
     config,
     hooks,
+    tracer,
   );
 
   // 创建子智能体运行器：跑一个一次性、带独立上下文的嵌套任务，只返回最终文本。
@@ -163,11 +174,6 @@ export function buildHarness(
   const mcp = new MCPRegistry(tools, config.workdir);
   // 注册扩展相关工具：让模型能调用技能和 MCP 提供的能力。
   registerExtensionTools(tools, skills, mcp);
-  // 启动时自动连接配置文件里声明的 MCP 服务器（后台进行，不阻塞启动流程）。
-  for (const server of config.mcpServers ?? []) {
-    void connectConfiguredMcp(mcp, server);
-  }
-
   // 创建扩展聚合对象：把技能和 MCP 包装成统一入口，方便 Harness 使用。
   const extensions = new Extensions(skills, mcp);
 
@@ -179,6 +185,72 @@ export function buildHarness(
   // 创建目标控制器：跟踪当前目标，并在每轮结束后用模型判断目标是否已达成。
   const goal = new GoalController(new PromptGoalEvaluator(provider));
 
-  // 把所有子系统汇总成一个 Harness 返回，作为整个程序的运行入口。
-  return new Harness(config, provider, tools, hooks, compactor, todoManager, memory, jobs, agents, extensions, goal, workflowStore, tracer);
+  const harness = new Harness(
+    config,
+    provider,
+    tools,
+    hooks,
+    compactor,
+    todoManager,
+    memory,
+    jobs,
+    agents,
+    extensions,
+    goal,
+    workflowStore,
+    tracer,
+    lifecycle,
+  );
+
+  const autoConnects = (config.mcpServers ?? []).map((server) => {
+    const controller = new AbortController();
+    return {
+      controller,
+      task: connectConfiguredMcp(mcp, server, controller.signal),
+    };
+  });
+  lifecycle.register({
+    id: "mcp:auto-connect",
+    kind: "mcp",
+    phase: "resources",
+    cancel: () => {
+      for (const connection of autoConnects) connection.controller.abort();
+    },
+    dispose: async () => {
+      await Promise.all(autoConnects.map((connection) => connection.task));
+    },
+    forceDispose: () => {
+      for (const connection of autoConnects) connection.controller.abort();
+    },
+  });
+  lifecycle.register({
+    id: "mcp:registry",
+    kind: "mcp",
+    phase: "resources",
+    cancel: () => mcp.cancel(),
+    dispose: () => mcp.closeAll(),
+    forceDispose: () => {
+      void mcp.forceCloseAll().catch((error: unknown) => {
+        log.warn("force close MCP clients failed", { error: String(error) });
+      });
+    },
+  });
+  lifecycle.register({
+    id: "jobs",
+    kind: "background",
+    phase: "resources",
+    cancel: () => jobs.abortBackground(),
+    dispose: () => jobs.stop(),
+    forceDispose: () => jobs.abortBackground(),
+  });
+  lifecycle.register({
+    id: "team",
+    kind: "teammate",
+    phase: "resources",
+    cancel: () => agents.cancel(),
+    dispose: () => agents.dispose(),
+    forceDispose: () => agents.forceDispose(),
+  });
+
+  return harness;
 }

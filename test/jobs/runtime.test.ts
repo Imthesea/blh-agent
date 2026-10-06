@@ -2,10 +2,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ChatMessage } from "../../src/core/types.js";
+import type { ChatMessage } from "../../src/contracts/types.js";
 import { BackgroundManager } from "../../src/jobs/background.js";
 import { CronScheduler } from "../../src/jobs/cron.js";
-import { AgentLock } from "../../src/core/agent-lock.js";
+import { AgentLock } from "../../src/runtime/agent-lock.js";
 import { JobsRuntime } from "../../src/jobs/runtime.js";
 
 let tmpDir: string;
@@ -147,6 +147,36 @@ describe("JobsRuntime", () => {
       await vi.advanceTimersByTimeAsync(0);
       expect(aborted).toBe(true);
       runtime.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stop waits for the current dream turn to exit", async () => {
+    vi.useFakeTimers();
+    let releaseDream: (() => void) | undefined;
+    try {
+      const runtime = makeRuntime();
+      runtime.setDreamTurn(
+        async () => true,
+        () =>
+          new Promise<void>((resolve) => {
+            releaseDream = resolve;
+          }),
+      );
+      runtime.start();
+      await vi.advanceTimersByTimeAsync(1000);
+
+      let stopped = false;
+      const stop = runtime.stop().then(() => {
+        stopped = true;
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(stopped).toBe(false);
+
+      releaseDream?.();
+      await stop;
+      expect(stopped).toBe(true);
     } finally {
       vi.useRealTimers();
     }

@@ -1,17 +1,14 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createLogger } from "@blh/logger";
-import type { ChatUsage } from "../core/types.js";
+import { summarize } from "../contracts/text.js";
+import type { ChatUsage } from "../contracts/types.js";
 import { costFor } from "./pricing.js";
 import type { UsageRecord } from "./types.js";
 
 const log = createLogger("tracer");
 
-/** 截断长文本，保护事件体积。 */
-export function summarize(text: string, max = 500): string {
-  if (text.length <= max) return text;
-  return text.slice(0, max) + "…";
-}
+export { summarize };
 
 export function localDate(d = new Date()): string {
   const pad = (n: number): string => String(n).padStart(2, "0");
@@ -49,6 +46,12 @@ export class Tracer {
     this.sid = sid;
   }
 
+  scoped(sid: string): Tracer {
+    const tracer = new Tracer(this.workdir);
+    tracer.setSid(sid);
+    return tracer;
+  }
+
   beginTurn(userMessage: string): void {
     this.turn += 1;
     this.turnStart = Date.now();
@@ -58,8 +61,11 @@ export class Tracer {
     this.event("turn_start", { user_message: summarize(userMessage) });
   }
 
-  endTurn(): void {
-    this.event("turn_end", this.turnStats());
+  endTurn(reason?: string): void {
+    this.event("turn_end", {
+      ...this.turnStats(),
+      ...(reason !== undefined ? { reason } : {}),
+    });
   }
 
   cancelTurn(reason: string): void {

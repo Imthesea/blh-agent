@@ -1,6 +1,6 @@
-import type { ChatProvider, Config, ProviderDefinition } from "../core/types.js";
+import type { ChatProvider, Config, ProviderDefinition } from "../contracts/types.js";
 import { getProviderDefinition } from "./catalog.js";
-import { readEnv } from "../core/env.js";
+import { readEnv } from "../config/env.js";
 import { OpenAICompatProvider } from "./openai-compat.js";
 import { AnthropicProvider } from "./anthropic.js";
 

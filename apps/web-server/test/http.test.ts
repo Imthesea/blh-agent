@@ -3,7 +3,8 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createWebServer, type WebContext } from "../src/http.js";
+import { createWebServer } from "../src/http/server.js";
+import type { WebContext } from "../src/http/context.js";
 import { SSEBroadcaster } from "../src/bridge.js";
 import { SessionManager } from "../src/session.js";
 import { ApprovalCoordinator } from "../src/approval.js";

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { ToolRegistry } from "../../src/tools/registry.js";
-import type { ToolDefinition } from "../../src/core/types.js";
+import type { ToolDefinition } from "../../src/contracts/types.js";
 
 function echoTool(): ToolDefinition {
   return {

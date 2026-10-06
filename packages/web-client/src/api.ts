@@ -1,4 +1,12 @@
-import type { ApprovalDecision, ChatMessage, SessionInfo, SessionListItem } from "./types.js";
+import type {
+  ApprovalDecision,
+  ChatMessage,
+  SessionInfo,
+  SessionIdResponse,
+  SessionListResponse,
+  SessionListItem,
+  SessionMessagesResponse,
+} from "@blh/web-protocol";
 import { createLogger } from "@blh/logger";
 
 const log = createLogger("web-client.api");
@@ -20,11 +28,13 @@ export function getSession(): Promise<SessionInfo> {
 }
 
 export async function listSessions(): Promise<SessionListItem[]> {
-  return (await request<{ sessions: SessionListItem[] }>("/api/sessions")).sessions;
+  return (await request<SessionListResponse>("/api/sessions")).sessions;
 }
 
 export async function getSessionMessages(file: string): Promise<ChatMessage[]> {
-  return (await request<{ messages: ChatMessage[] }>(`/api/sessions/${encodeURIComponent(file)}`)).messages;
+  return (
+    await request<SessionMessagesResponse>(`/api/sessions/${encodeURIComponent(file)}`)
+  ).messages;
 }
 
 export function sendMessage(text: string): Promise<unknown> {
@@ -48,12 +58,12 @@ export function respondApproval(requestId: string, decision: ApprovalDecision): 
 }
 
 export async function newSession(): Promise<string> {
-  return (await request<{ sessionId: string }>("/api/session/new", { method: "POST" })).sessionId;
+  return (await request<SessionIdResponse>("/api/session/new", { method: "POST" })).sessionId;
 }
 
 export async function resumeSession(file: string): Promise<string> {
   return (
-    await request<{ sessionId: string }>("/api/session/resume", {
+    await request<SessionIdResponse>("/api/session/resume", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ file }),

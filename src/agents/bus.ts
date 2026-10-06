@@ -83,12 +83,26 @@ export class MessageBus {
   }
 
   /** TS 的轮询等待：无消息时每 20ms 检查一次直到超时。 */
-  async waitForMessages(agent: string, timeoutMs?: number): Promise<BusMessage[]> {
+  async waitForMessages(
+    agent: string,
+    timeoutMs?: number,
+    signal?: AbortSignal,
+  ): Promise<BusMessage[]> {
     const deadline = timeoutMs === undefined ? undefined : Date.now() + timeoutMs;
     for (;;) {
+      if (signal?.aborted) return [];
       if (this.peek(agent)) return this.readInbox(agent);
       if (deadline !== undefined && Date.now() >= deadline) return [];
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(done, 20);
+        const onAbort = () => done();
+        function done(): void {
+          clearTimeout(timer);
+          signal?.removeEventListener("abort", onAbort);
+          resolve();
+        }
+        signal?.addEventListener("abort", onAbort, { once: true });
+      });
     }
   }
 }

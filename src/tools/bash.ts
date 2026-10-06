@@ -1,9 +1,10 @@
-import { spawn, execFile, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import {
   BoundedOutputCollector,
   formatTruncatedOutput,
   validateTimeoutSeconds,
 } from "../process/output.js";
+import { terminateProcessTree } from "../process/terminate.js";
 
 export function runBash(
   workdir: string,
@@ -30,9 +31,26 @@ export function runBash(
     const stderr = new BoundedOutputCollector(maxOutputChars);
     let settled = false;
     let timer: NodeJS.Timeout | undefined;
+    let terminationOutput: string | undefined;
+
+    const finish = (output: string): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(output);
+    };
+
+    const terminate = (output: string, child?: ChildProcess): void => {
+      if (settled) return;
+      terminationOutput = output;
+      cleanup();
+      const terminated =
+        child === undefined ? Promise.resolve() : terminateProcessTree(child);
+      void terminated.then(() => finish(output));
+    };
 
     if (signal?.aborted) {
-      resolve("error: command cancelled");
+      finish("error: command cancelled");
       return;
     }
 
@@ -42,10 +60,7 @@ export function runBash(
     });
 
     const onAbort = () => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      void killTree(child).then(() => resolve("error: command cancelled"));
+      terminate("error: command cancelled", child);
     };
     if (signal !== undefined) {
       if (signal.aborted) {
@@ -59,16 +74,14 @@ export function runBash(
     child.stderr?.on("data", (chunk: Buffer) => stderr.append(chunk));
 
     child.on("error", (error) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      resolve(`error: ${error.message}`);
+      finish(terminationOutput ?? `error: ${error.message}`);
     });
 
     child.on("close", (code) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
+      if (terminationOutput !== undefined) {
+        finish(terminationOutput);
+        return;
+      }
       stdout.end();
       stderr.end();
       const hasStderr = stderr.total > 0;
@@ -76,16 +89,11 @@ export function runBash(
       const totalChars = stdout.total + separatorLength + stderr.total;
       const combinedOutput = stdout.text + (hasStderr ? `\n(stderr):\n${stderr.text}` : "");
       const exitCode = typeof code === "number" ? code : 1;
-      resolve(formatBashOutput(combinedOutput, totalChars, exitCode, maxOutputChars));
+      finish(formatBashOutput(combinedOutput, totalChars, exitCode, maxOutputChars));
     });
 
     timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      void killTree(child).then(() =>
-        resolve(`error: command timed out after ${timeoutSec}s`),
-      );
+      terminate(`error: command timed out after ${timeoutSec}s`, child);
     }, timeoutSec * 1000 + 50);
     timer.unref();
 
@@ -95,24 +103,6 @@ export function runBash(
         timer = undefined;
       }
       signal?.removeEventListener("abort", onAbort);
-    }
-  });
-}
-
-function killTree(child: ChildProcess): Promise<void> {
-  return new Promise((resolve) => {
-    if (child.pid === undefined) return resolve();
-    if (process.platform === "win32") {
-      // cmd.exe 会派生子进程（如 node），仅杀 cmd.exe 会留下孤儿进程。
-      // taskkill /T /F 会连同整个进程树一并强杀。
-      execFile("taskkill", ["/pid", String(child.pid), "/T", "/F"], () => resolve());
-    } else {
-      try {
-        process.kill(-child.pid, "SIGKILL");
-      } catch {
-        child.kill("SIGKILL");
-      }
-      resolve();
     }
   });
 }

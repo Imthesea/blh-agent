@@ -10,7 +10,7 @@ import {
   type WorkflowTaskLike,
 } from "../../src/workflow/runtime.js";
 import { WorkflowInputError, type JsonSchema } from "../../src/workflow/schema.js";
-import type { ChatProvider } from "../../src/core/types.js";
+import type { ChatProvider } from "../../src/contracts/types.js";
 
 function makeTask(): WorkflowTaskLike {
   return {

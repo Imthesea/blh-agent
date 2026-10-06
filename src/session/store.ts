@@ -1,6 +1,6 @@
 import { appendFileSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import * as path from "node:path";
-import type { ChatMessage } from "../core/types.js";
+import type { ChatMessage } from "../contracts/types.js";
 
 /** 会话文件的唯一读写入口：单一 JSONL 文件持续 append，与压缩解耦。 */
 export class SessionStore {

@@ -1,7 +1,7 @@
-import type { ChatMessage } from "../core/types.js";
+import type { ChatMessage } from "../contracts/types.js";
 import type { BackgroundManager } from "./background.js";
 import type { CronJob, CronScheduler } from "./cron.js";
-import { AgentLock } from "../core/agent-lock.js";
+import { AgentLock } from "../runtime/agent-lock.js";
 import { createLogger } from "@blh/logger";
 
 const log = createLogger("jobs.runtime");
@@ -43,6 +43,9 @@ export class JobsRuntime {
 
   /** cron 调度器定时器：每秒 poll 一次，把到期的 cron 任务入内存队列 */
   private schedulerTimer: NodeJS.Timeout | undefined;
+
+  /** 当前正在执行的 dream/cron 轮次；stop 时必须等待它退出。 */
+  private queueTask: Promise<void> | null = null;
 
   /** 队列轮询定时器：以指数退避的间隔反复调用 processQueue */
   private queueTimer: NodeJS.Timeout | undefined;
@@ -127,6 +130,9 @@ export class JobsRuntime {
     this.schedulerTimer = undefined;
     this.queueTimer = undefined;
     this.queueFailures = 0;
+    const activeQueueTask = this.queueTask;
+    this.queueTask = null;
+    if (activeQueueTask !== null) await activeQueueTask;
     await this.background.stopAll();
   }
 
@@ -139,16 +145,19 @@ export class JobsRuntime {
     if (!this.started) return;
     const delay = Math.min(200 * 2 ** this.queueFailures, 30000);
     this.queueTimer = setTimeout(() => {
-      this.processQueue()
+      const task = this.processQueue()
         .then(() => {
           this.queueFailures = 0;
-          this.scheduleQueuePoll();
         })
         .catch((error: unknown) => {
           this.queueFailures += 1;
           log.warn("cron scheduled turn failed", { retry: this.queueFailures, error: String(error) });
-          this.scheduleQueuePoll();
+        })
+        .finally(() => {
+          this.queueTask = null;
+          if (this.started) this.scheduleQueuePoll();
         });
+      this.queueTask = task;
     }, delay);
     this.queueTimer.unref();
   }

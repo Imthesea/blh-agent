@@ -2,7 +2,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { ChatMessage, ChatProvider, ToolDefinition } from "../../src/core/types.js";
+import type { ChatMessage, ChatProvider, ToolDefinition } from "../../src/contracts/types.js";
 import { MemoryRecall } from "../../src/memory/recall.js";
 import { MemoryStore } from "../../src/memory/store.js";
 import { Tracer } from "../../src/tracing/tracer.js";

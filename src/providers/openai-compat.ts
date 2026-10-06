@@ -7,7 +7,7 @@ import type {
   ProviderStreamEvent,
   ToolCall,
   ToolDefinition,
-} from "../core/types.js";
+} from "../contracts/types.js";
 import { withRetry } from "./retry.js";
 import { createLogger } from "@blh/logger";
 

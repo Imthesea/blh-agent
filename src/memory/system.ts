@@ -1,5 +1,5 @@
 // src/memory/system.ts
-import type { ChatMessage, ChatProvider } from "../core/types.js";
+import type { ChatMessage, ChatProvider } from "../contracts/types.js";
 import type { Tracer } from "../tracing/tracer.js";
 import { MemoryDream } from "./dream.js";
 import { MemoryExtractor } from "./extract.js";

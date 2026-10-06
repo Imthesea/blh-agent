@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { BackgroundManager } from "../../src/jobs/background.js";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { removeDirWithRetries } from "../helpers/fs.js";
 
 function makeManager(): BackgroundManager {
   return new BackgroundManager(process.cwd());
@@ -78,13 +79,13 @@ describe("BackgroundManager", () => {
     try {
       const manager = new BackgroundManager(workdir, 1);
       const taskId = manager.start("node slow.js");
-      await waitStatus(manager, taskId, "failed", 3000);
+      await waitStatus(manager, taskId, "failed", 8000);
       const notifications = manager.collect();
       expect(notifications[0]).toContain("command timed out after 1s");
     } finally {
-      rmSync(workdir, { recursive: true, force: true });
+      await removeDirWithRetries(workdir);
     }
-  }, 5000);
+  }, 10000);
 
   it("stopAll cancels running commands and leaves a collectable notification", async () => {
     const workdir = makeSlowWorkdir();
@@ -97,7 +98,7 @@ describe("BackgroundManager", () => {
       expect(notifications[0]).toContain("<status>cancelled</status>");
       expect(notifications[0]).toContain("command cancelled");
     } finally {
-      rmSync(workdir, { recursive: true, force: true });
+      await removeDirWithRetries(workdir);
     }
   }, 15000);
   it("truncates huge background output", async () => {

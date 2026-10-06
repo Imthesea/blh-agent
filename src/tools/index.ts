@@ -1,4 +1,4 @@
-import type { Config } from "../core/types.js";
+import type { Config } from "../contracts/types.js";
 import type { ToolRegistry } from "./registry.js";
 import { readFile, writeFile, editFile } from "./files.js";
 import { runBash } from "./bash.js";

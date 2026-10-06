@@ -1,5 +1,5 @@
-import type { ProviderDefinition, ProviderId } from "../core/types.js";
-import { readEnv } from "../core/env.js";
+import type { ProviderDefinition, ProviderId } from "../contracts/types.js";
+import { readEnv } from "../config/env.js";
 
 /** 内置 provider 描述表。catalog 顺序 = 自动检测优先级（deepseek 第一保证老用户升级不变）。 */
 const builtin: ProviderDefinition[] = [

@@ -1,32 +1,26 @@
-/** 与模型交互的一条消息（web 侧最小镜像）。 */
-export interface ChatMessage {
-  role: "system" | "user" | "assistant" | "tool";
-  content: string | null;
-  cancelled?: boolean;
-}
+import type {
+  AgentEvent,
+  ApprovalDecision,
+  ChatMessage,
+  SessionInfo,
+  SessionIdResponse,
+  SessionListResponse,
+  SessionListItem,
+  SessionMessagesResponse,
+  WebEvent,
+} from "@blh/web-protocol";
 
-/** agent 高层事件（镜像根 core/events.ts 的 AgentEvent）。 */
-export type AgentEvent =
-  | { type: "turn_start" }
-  | { type: "assistant_text_delta"; text: string }
-  | { type: "tool_call"; id: string; name: string; arguments: string }
-  | { type: "tool_result"; id: string; name: string; output: string; isError: boolean }
-  | { type: "turn_cancelled"; text: string }
-  | { type: "turn_end" };
-
-/** 服务器推给浏览器的所有事件：复用 agent 事件 + 审批 + 错误。 */
-export type WebEvent =
-  | AgentEvent
-  | {
-      type: "approval_requested";
-      requestId: string;
-      tool: string;
-      target: string;
-      args: Record<string, unknown>;
-    }
-  | { type: "agent_error"; message: string };
-
-export type ApprovalDecision = "allow" | "deny" | "always_allow";
+export type {
+  AgentEvent,
+  ApprovalDecision,
+  ChatMessage,
+  SessionInfo,
+  SessionIdResponse,
+  SessionListResponse,
+  SessionListItem,
+  SessionMessagesResponse,
+  WebEvent,
+} from "@blh/web-protocol";
 
 export interface ApprovalRequest {
   tool: string;
@@ -87,7 +81,7 @@ export interface WebTurnRunner {
   sessionStore?: SessionStoreLike | undefined;
   jobs?: WebJobs | undefined;
   /** 释放长生命周期资源；完整 Harness 会实现。 */
-  dispose?(): Promise<void>;
+  dispose?(timeoutMs?: number): Promise<void>;
   isDreamDue?(): Promise<boolean>;
   runDreamTurn?(messages: ChatMessage[], signal?: AbortSignal): Promise<void>;
 }

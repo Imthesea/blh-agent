@@ -12,7 +12,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@blh/logger": "workspace:*"
+    "@blh/logger": "workspace:*",
+    "@blh/web-protocol": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.5.0",

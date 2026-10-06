@@ -1,5 +1,5 @@
 /** goal transcript:按 OpenAI 消息格式渲染会话文本。 */
-import type { ChatMessage } from "../core/types.js";
+import type { ChatMessage } from "../contracts/types.js";
 
 export function plainContent(message: ChatMessage): string {
   const role = message.role;

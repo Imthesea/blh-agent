@@ -1,12 +1,13 @@
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { BusMessage } from "../../src/agents/bus.js";
 import { TeammateRuntime } from "../../src/agents/teammate.js";
 import type { TeammateTeam } from "../../src/agents/teammate.js";
-import { HookBus } from "../../src/core/hooks.js";
-import type { ChatMessage, Config } from "../../src/core/types.js";
+import { HookBus } from "../../src/runtime/hooks.js";
+import type { ChatMessage, ChatProvider, Config, ToolDefinition } from "../../src/contracts/types.js";
+import { Tracer } from "../../src/tracing/tracer.js";
 import type { Task } from "../../src/planning/tasks.js";
 import { TaskStore } from "../../src/planning/tasks.js";
 import { MockProvider, makeTextMessage, makeToolCallMessage } from "../integration/helpers.js";
@@ -68,7 +69,11 @@ class FakeTeam implements TeammateTeam {
   }
 }
 
-function makeTeammate(team: TeammateTeam, scripted: ChatMessage[]): TeammateRuntime {
+function makeTeammate(
+  team: TeammateTeam,
+  source: ChatProvider | ChatMessage[],
+  tracer?: Tracer,
+): TeammateRuntime {
   const config: Config = {
     apiKey: "k",
     model: "m",
@@ -82,12 +87,21 @@ function makeTeammate(team: TeammateTeam, scripted: ChatMessage[]): TeammateRunt
     "do it",
     null,
     false,
-    new MockProvider(scripted),
+    Array.isArray(source) ? new MockProvider(source) : source,
     config,
     new HookBus(),
     new TaskStore(path.join(tmpDir, ".tasks")),
     team,
+    tracer,
   );
+}
+
+function readJsonl(file: string): Array<Record<string, unknown>> {
+  if (!existsSync(file)) return [];
+  return readFileSync(file, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
 }
 
 describe("TeammateRuntime", () => {
@@ -98,6 +112,114 @@ describe("TeammateRuntime", () => {
     const types = team.sent.map((entry) => entry[3]);
     expect(types).toContain("result");
     expect(types).toContain("idle_notification");
+  });
+
+  it("uses response-scoped usage and traces it under the teammate sid", async () => {
+    class UsageProvider implements ChatProvider {
+      async chat(): Promise<ChatMessage> {
+        throw new Error("chat should not be used");
+      }
+
+      async chatWithUsage(): Promise<{
+        message: ChatMessage;
+        usage: { promptTokens: number; completionTokens: number } | null;
+      }> {
+        return {
+          message: makeTextMessage("all done"),
+          usage: { promptTokens: 13, completionTokens: 5 },
+        };
+      }
+
+      lastUsage(): { promptTokens: number; completionTokens: number } {
+        return { promptTokens: 999, completionTokens: 999 };
+      }
+    }
+
+    const team = new FakeTeam();
+    const tracer = new Tracer(tmpDir);
+    const runtime = new TeammateRuntime(
+      "bob",
+      "worker",
+      "do it",
+      null,
+      false,
+      new UsageProvider(),
+      {
+        apiKey: "k",
+        model: "m",
+        workdir: tmpDir,
+        bashTimeout: 120,
+        maxOutputChars: 30000,
+      },
+      new HookBus(),
+      new TaskStore(path.join(tmpDir, ".tasks")),
+      team,
+      tracer,
+    );
+
+    await expect(runtime.work()).resolves.toBe("idle");
+
+    const traceFiles = readdirSync(path.join(tmpDir, ".blh", "traces"))
+      .filter((file) => file.endsWith(".jsonl"))
+      .map((file) => path.join(tmpDir, ".blh", "traces", file));
+    const events = traceFiles.flatMap((file) => readJsonl(file));
+    const usage = readJsonl(path.join(tmpDir, ".blh", "usage.jsonl"));
+
+    expect(events.map((event) => event["type"])).toEqual([
+      "turn_start",
+      "llm",
+      "turn_end",
+    ]);
+    expect(events.every((event) => event["sid"] === "teammate:bob")).toBe(true);
+    expect(usage).toEqual([
+      expect.objectContaining({ sid: "teammate:bob", in: 13, out: 5 }),
+    ]);
+  });
+
+  it("returns stop when the model call is aborted", async () => {
+    class AbortableProvider implements ChatProvider {
+      async chat(
+        _messages: ChatMessage[],
+        _tools: ToolDefinition[],
+        _maxTokens?: number,
+        signal?: AbortSignal,
+      ): Promise<ChatMessage> {
+        return new Promise((_resolve, reject) => {
+          signal?.addEventListener(
+            "abort",
+            () =>
+              reject(
+                Object.assign(new Error("cancelled"), { name: "AbortError" }),
+              ),
+            { once: true },
+          );
+        });
+      }
+    }
+
+    const team = new FakeTeam();
+    const runtime = makeTeammate(team, new AbortableProvider());
+    const controller = new AbortController();
+    const working = runtime.work(controller.signal);
+    await new Promise((resolve) => setImmediate(resolve));
+    controller.abort();
+
+    await expect(working).resolves.toBe("stop");
+    expect(team.sent).toEqual([]);
+  });
+
+  it("sends the original model error to lead and stops", async () => {
+    class FailingProvider implements ChatProvider {
+      async chat(): Promise<ChatMessage> {
+        throw new Error("boom");
+      }
+    }
+
+    const team = new FakeTeam();
+    const runtime = makeTeammate(team, new FailingProvider());
+
+    await expect(runtime.work()).resolves.toBe("stop");
+    expect(team.sent).toContainEqual(["bob", "lead", "Error: boom", "error"]);
   });
 
   it("workspace tools require task", async () => {

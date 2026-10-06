@@ -11,6 +11,9 @@ importers:
       '@anthropic-ai/sdk':
         specifier: ^0.128.0
         version: 0.128.0
+      '@blh/lifecycle':
+        specifier: workspace:*
+        version: link:packages/lifecycle
       '@blh/logger':
         specifier: workspace:*
         version: link:packages/logger
@@ -85,9 +88,27 @@ importers:
 
   apps/web-server:
     dependencies:
+      '@blh/lifecycle':
+        specifier: workspace:*
+        version: link:../../packages/lifecycle
       '@blh/logger':
         specifier: workspace:*
         version: link:../../packages/logger
+      '@blh/web-protocol':
+        specifier: workspace:*
+        version: link:../../packages/web-protocol
+    devDependencies:
+      '@types/node':
+        specifier: ^20.0.0
+        version: 20.19.43
+      typescript:
+        specifier: ^5.5.0
+        version: 5.5.2
+      vitest:
+        specifier: ^2.0.0
+        version: 2.0.0(@types/node@20.19.43)
+
+  packages/lifecycle:
     devDependencies:
       '@types/node':
         specifier: ^20.0.0
@@ -116,7 +137,22 @@ importers:
       '@blh/logger':
         specifier: workspace:*
         version: link:../logger
+      '@blh/web-protocol':
+        specifier: workspace:*
+        version: link:../web-protocol
     devDependencies:
+      typescript:
+        specifier: ^5.5.0
+        version: 5.5.2
+      vitest:
+        specifier: ^2.0.0
+        version: 2.0.0(@types/node@20.19.43)
+
+  packages/web-protocol:
+    devDependencies:
+      '@types/node':
+        specifier: ^20.0.0
+        version: 20.19.43
       typescript:
         specifier: ^5.5.0
         version: 5.5.2

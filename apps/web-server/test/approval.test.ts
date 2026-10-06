@@ -3,7 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApprovalCoordinator, loadUserRules, persistUserRule, userRulesPath } from "../src/approval.js";
-import type { WebEvent } from "../src/bridge.js";
+import type { WebEvent } from "../src/types.js";
 
 describe("user rules 持久化", () => {
   let tmpDir: string;

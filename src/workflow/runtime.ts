@@ -1,7 +1,7 @@
 /** workflow 运行时:runner、budget、ExecutionState 编排原语。 */
 import { MISS, SimpleJsonSchema, WorkflowInputError, stableHash, parseRunnerJson, stableStringify, type JsonSchema } from "./schema.js";
 import type { WorkflowJournal } from "./journal.js";
-import type { ChatProvider } from "../core/types.js";
+import type { ChatProvider } from "../contracts/types.js";
 
 export const AGENT_CAP = 1000;
 export const CONCURRENCY = 8;

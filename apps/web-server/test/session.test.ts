@@ -4,8 +4,7 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionManager } from "../src/session.js";
 import { ApprovalCoordinator } from "../src/approval.js";
-import type { ChatMessage, TurnLock, WebTurnRunner } from "../src/types.js";
-import type { WebEvent } from "../src/bridge.js";
+import type { ChatMessage, TurnLock, WebEvent, WebTurnRunner } from "../src/types.js";
 import { makeTestSessionStore } from "./helpers.js";
 
 function fakeLock(): TurnLock {
@@ -305,5 +304,130 @@ describe("SessionManager", () => {
     expect(manager.stop()).toBe(true);
     await run;
     expect(decision).toBe("deny");
+  });
+
+  it("shutdown 拒绝排队中和后续的会话变更", async () => {
+    const runner: WebTurnRunner = {
+      newSession: () => [{ role: "system", content: "sys" }],
+      runTurn: vi.fn(async (_messages, _text, _events, signal) => {
+        await new Promise<void>((resolve) => {
+          signal?.addEventListener("abort", () => resolve(), { once: true });
+        });
+      }),
+    };
+    let tail: Promise<unknown> = Promise.resolve();
+    const lock: TurnLock = {
+      withLock: <T,>(fn: () => Promise<T>): Promise<T> => {
+        const result = tail.then(() => fn());
+        tail = result.catch(() => {});
+        return result;
+      },
+    };
+    const manager = new SessionManager(
+      runner,
+      lock,
+      () => {},
+      new ApprovalCoordinator(() => {}),
+      makeTestSessionStore(),
+    );
+    const handle = await manager.create(tmpDir);
+
+    const activeTurn = manager.runTurn(handle.id, "first");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const queuedCreate = manager.create(tmpDir);
+    const shutdown = manager.shutdown();
+
+    await expect(queuedCreate).rejects.toThrow("web server is shutting down");
+    await activeTurn;
+    await shutdown;
+    await expect(manager.create(tmpDir)).rejects.toThrow("web server is shutting down");
+    await expect(manager.resume(tmpDir, handle.id)).rejects.toThrow(
+      "web server is shutting down",
+    );
+    await expect(manager.remove(tmpDir, handle.id)).rejects.toThrow(
+      "web server is shutting down",
+    );
+  });
+
+  it("shutdown 等待排队中的会话操作结束", async () => {
+    let turnStarted!: () => void;
+    const turnStartedGate = new Promise<void>((resolve) => {
+      turnStarted = resolve;
+    });
+    let releaseTurn!: () => void;
+    const turnBlocker = new Promise<void>((resolve) => {
+      releaseTurn = resolve;
+    });
+    const runner: WebTurnRunner = {
+      newSession: () => [{ role: "system", content: "sys" }],
+      runTurn: vi.fn(async () => {
+        turnStarted();
+        await turnBlocker;
+      }),
+    };
+    const settleOrder: string[] = [];
+    const delaySettle = async (): Promise<void> => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    };
+    let tail: Promise<unknown> = Promise.resolve();
+    const lock: TurnLock = {
+      withLock: <T,>(fn: () => Promise<T>): Promise<T> => {
+        const result = tail.then(() => fn()).finally(delaySettle);
+        tail = result.then(
+          () => undefined,
+          () => undefined,
+        );
+        return result;
+      },
+    };
+    const manager = new SessionManager(
+      runner,
+      lock,
+      () => {},
+      new ApprovalCoordinator(() => {}),
+      makeTestSessionStore(),
+    );
+    const handle = await manager.create(tmpDir);
+
+    const activeTurn = manager.runTurn(handle.id, "first");
+    await turnStartedGate;
+    const queuedCreate = manager.create(tmpDir).finally(() => {
+      settleOrder.push("queued create settled");
+    });
+    const shutdown = manager.shutdown().then(() => {
+      settleOrder.push("shutdown settled");
+    });
+    releaseTurn();
+
+    await expect(queuedCreate).rejects.toThrow("web server is shutting down");
+    await activeTurn;
+    await shutdown;
+    expect(settleOrder).toEqual(["queued create settled", "shutdown settled"]);
+  });
+
+  it("shutdown 不因当前轮次失败而失败", async () => {
+    const runner: WebTurnRunner = {
+      newSession: () => [{ role: "system", content: "sys" }],
+      runTurn: vi.fn(async () => {
+        throw new Error("turn failed");
+      }),
+    };
+    const manager = new SessionManager(
+      runner,
+      fakeLock(),
+      () => {},
+      new ApprovalCoordinator(() => {}),
+      makeTestSessionStore(),
+    );
+    const handle = await manager.create(tmpDir);
+
+    const runFailure = expect(manager.runTurn(handle.id, "hi")).rejects.toThrow(
+      "turn failed",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const shutdown = manager.shutdown();
+
+    await runFailure;
+    await expect(shutdown).resolves.toBeUndefined();
   });
 });

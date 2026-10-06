@@ -1,5 +1,5 @@
 /** goal 评估器:无 tools 单轮,判定完成条件是否满足。 */
-import type { ChatMessage, ChatProvider } from "../core/types.js";
+import type { ChatMessage, ChatProvider } from "../contracts/types.js";
 import { transcriptText } from "./transcript.js";
 import { GoalError, type GoalEvaluation } from "./types.js";
 

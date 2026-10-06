@@ -1,10 +1,11 @@
 /** 后台任务:慢 bash 命令异步执行,后续轮次收集完成通知。 */
-import { spawn, execFile, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import {
   BoundedOutputCollector,
   formatTruncatedOutput,
   validateTimeoutSeconds,
 } from "../process/output.js";
+import { terminateProcessTree } from "../process/terminate.js";
 
 export interface BackgroundTask {
   command: string;
@@ -29,6 +30,7 @@ function runBashProcess(
     const stderr = new BoundedOutputCollector(maxOutput);
     let settled = false;
     let timer: NodeJS.Timeout | undefined;
+    let termination: { output: string; exitCode: number | null; cancelled: boolean } | undefined;
 
     const finish = (
       output: string,
@@ -48,9 +50,11 @@ function runBashProcess(
       child?: ChildProcess,
     ): void => {
       if (settled) return;
-      settled = true;
+      termination = { output, exitCode, cancelled };
       cleanup();
-      void killTree(child).then(() => resolve({ output, exitCode, cancelled }));
+      const terminated =
+        child === undefined ? Promise.resolve() : terminateProcessTree(child);
+      void terminated.then(() => finish(output, exitCode, cancelled));
     };
 
     if (signal?.aborted) {
@@ -70,16 +74,25 @@ function runBashProcess(
     child.stderr?.on("data", (chunk: Buffer) => stderr.append(chunk));
 
     child.on("error", (error) => {
-      finish(`error: ${error.message}`, 1);
+      finish(
+        termination?.output ?? `error: ${error.message}`,
+        termination?.exitCode ?? 1,
+        termination?.cancelled,
+      );
     });
 
     child.on("close", (code) => {
-      const exitCode = typeof code === "number" ? code : 1;
+      const exitCode =
+        termination?.exitCode ?? (typeof code === "number" ? code : 1);
       stdout.end();
       stderr.end();
       const totalChars = stdout.total + stderr.total;
       const combined = formatTruncatedOutput(stdout.text + stderr.text, totalChars, maxOutput);
-      finish(combined || "(no output)", exitCode);
+      finish(
+        termination?.output ?? (combined || "(no output)"),
+        exitCode,
+        termination?.cancelled ?? false,
+      );
     });
 
     timer = setTimeout(() => {
@@ -93,23 +106,6 @@ function runBashProcess(
         timer = undefined;
       }
       signal?.removeEventListener("abort", onAbort);
-    }
-  });
-}
-
-/** 与 bash.ts 相同的进程树强杀:cmd.exe 会派生子进程,仅杀壳进程会留孤儿 */
-function killTree(child?: ChildProcess): Promise<void> {
-  return new Promise((resolve) => {
-    if (child === undefined || child.pid === undefined) return resolve();
-    if (process.platform === "win32") {
-      execFile("taskkill", ["/pid", String(child.pid), "/T", "/F"], () => resolve());
-    } else {
-      try {
-        process.kill(-child.pid, "SIGKILL");
-      } catch {
-        child.kill("SIGKILL");
-      }
-      resolve();
     }
   });
 }

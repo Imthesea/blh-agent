@@ -7,7 +7,7 @@ import type {
   TurnLock,
   WebTurnRunner,
 } from "./types.js";
-import type { WebEvent } from "./bridge.js";
+import type { WebEvent } from "./types.js";
 import type { ApprovalCoordinator } from "./approval.js";
 import { EventBus } from "./events.js";
 import { createLogger } from "@blh/logger";
@@ -25,6 +25,8 @@ export interface SessionHandle {
 export class SessionManager {
   private current: SessionHandle | undefined;
   private currentAbort: AbortController | null = null;
+  private closing = false;
+  private readonly activeOperations = new Set<Promise<unknown>>();
 
   constructor(
     private readonly runner: WebTurnRunner,
@@ -34,8 +36,16 @@ export class SessionManager {
     private readonly sessionStore: SessionStoreModule,
   ) {}
 
+  private ensureActive(): void {
+    if (this.closing) throw new Error("web server is shutting down");
+  }
+
   async create(workdir: string): Promise<SessionHandle> {
-    return this.lock.withLock(async () => this.createUnlocked(workdir));
+    this.ensureActive();
+    return this.track(() => this.lock.withLock(async () => {
+      this.ensureActive();
+      return this.createUnlocked(workdir);
+    }));
   }
 
   private createUnlocked(workdir: string): SessionHandle {
@@ -53,7 +63,11 @@ export class SessionManager {
   }
 
   async resume(workdir: string, file: string): Promise<SessionHandle> {
-    return this.lock.withLock(async () => this.resumeUnlocked(workdir, file));
+    this.ensureActive();
+    return this.track(() => this.lock.withLock(async () => {
+      this.ensureActive();
+      return this.resumeUnlocked(workdir, file);
+    }));
   }
 
   private resumeUnlocked(workdir: string, file: string): SessionHandle {
@@ -82,10 +96,12 @@ export class SessionManager {
   }
 
   runTurn(id: string, text: string): Promise<void> {
+    this.ensureActive();
     const events = new EventBus();
     const off = events.subscribe((event) => this.broadcast(event));
     const controller = new AbortController();
     const run = () => {
+      this.ensureActive();
       const handle = this.get(id);
       if (handle === undefined) throw new Error(`no such session: ${id}`);
       // 在真正拿到锁、开始跑之前才登记 currentAbort，避免并发排队时被后一轮覆盖，
@@ -96,7 +112,7 @@ export class SessionManager {
     log.debug("run turn", { id, textLength: text.length });
     // 用户提交优先：中断进行中的后台回合（dream/cron，其内部回滚后释放锁）。
     this.runner.jobs?.abortBackground();
-    return this.lock.withLock(run).finally(() => {
+    return this.track(() => this.lock.withLock(run)).finally(() => {
       off();
       if (this.currentAbort === controller) this.currentAbort = null;
     });
@@ -111,13 +127,19 @@ export class SessionManager {
     return true;
   }
 
+  cancel(): boolean {
+    return this.stop();
+  }
+
   approve(requestId: string, decision: ApprovalDecision): boolean {
     return this.approvals.resolve(requestId, decision);
   }
 
   /** 删除会话文件；若删除的是当前会话，则跳到剩余最新会话，无剩余时新建空会话（维持「始终有活跃会话」不变量）。 */
   async remove(workdir: string, file: string): Promise<void> {
-    await this.lock.withLock(async () => {
+    this.ensureActive();
+    return this.track(() => this.lock.withLock(async () => {
+      this.ensureActive();
       const fullPath = this.sessionFile(workdir, file);
       this.sessionStore.remove(fullPath);
       if (this.current !== undefined && this.current.file === fullPath) {
@@ -130,7 +152,7 @@ export class SessionManager {
         }
       }
       log.debug("session removed", { file: fullPath });
-    });
+    }));
   }
 
   async dispose(id: string): Promise<void> {
@@ -144,5 +166,19 @@ export class SessionManager {
       throw new Error(`invalid session file: ${file}`);
     }
     return path.join(this.sessionStore.sessionsDir(workdir), file);
+  }
+
+  async shutdown(): Promise<void> {
+    this.closing = true;
+    this.stop();
+    await Promise.allSettled([...this.activeOperations]);
+  }
+
+  private track<T>(operation: () => Promise<T>): Promise<T> {
+    const active = operation().finally(() => {
+      this.activeOperations.delete(active);
+    });
+    this.activeOperations.add(active);
+    return active;
   }
 }

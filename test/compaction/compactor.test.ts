@@ -8,7 +8,7 @@ import type {
   ChatMessage,
   ChatProvider,
   ToolDefinition,
-} from "../../src/core/types.js";
+} from "../../src/contracts/types.js";
 
 class FakeProvider implements ChatProvider {
   readonly requests: { messages: ChatMessage[]; tools: ToolDefinition[] }[] = [];

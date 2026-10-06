@@ -1,14 +1,15 @@
-import { createWebServer } from "./http.js";
+import { createWebServer } from "./http/server.js";
 import { SSEBroadcaster } from "./bridge.js";
 import { ApprovalCoordinator, loadUserRules, persistUserRule } from "./approval.js";
 import { SessionManager } from "./session.js";
 import type { BuildHarness, SessionStoreModule, TraceModule } from "./types.js";
 import { createLogger, initLogger } from "@blh/logger";
+import { LifecycleManager } from "@blh/lifecycle";
 
 const log = createLogger("web-server.index");
 
 export type { BuildHarness, SessionStoreModule, TraceModule } from "./types.js";
-export type { WebEvent, AgentEvent } from "./bridge.js";
+export type { WebEvent, AgentEvent } from "./types.js";
 
 export interface WebServerOptions {
   workdir: string;
@@ -51,6 +52,8 @@ function resolveWebPort(port: number | undefined): number {
 
 export async function startWebServer(options: WebServerOptions): Promise<RunningWebServer> {
   const workdir = options.workdir;
+  const port = resolveWebPort(options.port);
+  const lifecycle = new LifecycleManager();
   initLogger(workdir);
 
   const broadcaster = new SSEBroadcaster();
@@ -68,67 +71,115 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
     persistRule: (rule) => persistUserRule(workdir, rule),
   });
 
-  const lock = harness.jobs?.agentLock;
-  if (lock === undefined) {
-    throw new Error("web server requires a harness with an agent lock");
-  }
+  lifecycle.register({
+    id: "web:runner",
+    kind: "harness",
+    phase: "resources",
+    cancel: () => harness.jobs?.abortBackground(),
+    dispose: async (deadline) => {
+      if (harness.dispose !== undefined) {
+        await harness.dispose(deadline.remainingMs());
+        return;
+      }
+      await harness.jobs?.stop();
+    },
+    forceDispose: () => {
+      if (harness.dispose !== undefined) {
+        void harness.dispose(0).catch(() => undefined);
+        return;
+      }
+      harness.jobs?.abortBackground();
+    },
+  });
 
-  const session = new SessionManager(
-    harness,
-    lock,
-    (event) => broadcaster.broadcast(event),
-    approvals,
-    options.sessionStore,
-  );
-  if (harness.jobs !== undefined) {
-    harness.jobs.setDreamTurn(
-      // buildHarness 实际返回 Harness 实例，isDreamDue/runDreamTurn 是其固有方法（非可选），此处断言安全。
-      () => harness.isDreamDue!(),
-      async (signal) => {
-        const handle = session.currentHandle;
-        if (handle === undefined) return;
-        await harness.runDreamTurn!(handle.messages, signal);
-      },
+  try {
+    const lock = harness.jobs?.agentLock;
+    if (lock === undefined) {
+      throw new Error("web server requires a harness with an agent lock");
+    }
+
+    const session = new SessionManager(
+      harness,
+      lock,
+      (event) => broadcaster.broadcast(event),
+      approvals,
+      options.sessionStore,
     );
-    harness.jobs.start(); // web 场景此前从未 start，dream 与 cron 一并激活
+    if (harness.jobs !== undefined) {
+      harness.jobs.setDreamTurn(
+        // buildHarness 实际返回 Harness 实例，isDreamDue/runDreamTurn 是其固有方法（非可选），此处断言安全。
+        () => harness.isDreamDue!(),
+        async (signal) => {
+          const handle = session.currentHandle;
+          if (handle === undefined) return;
+          await harness.runDreamTurn!(handle.messages, signal);
+        },
+      );
+      harness.jobs.start(); // web 场景此前从未 start，dream 与 cron 一并激活
+    }
+
+    const server = createWebServer({
+      session,
+      broadcaster,
+      workdir,
+      sessionStore: options.sessionStore,
+      staticDir: options.staticDir ?? null,
+      ...(options.trace !== undefined ? { trace: options.trace } : {}),
+    });
+
+    lifecycle.register({
+      id: "web:http-listener",
+      kind: "http-server",
+      phase: "listener",
+      cancel: () => {
+        void server.stopAcceptingRequests().catch(() => undefined);
+      },
+      dispose: () => server.stopAcceptingRequests(),
+      forceDispose: () => {
+        server.closeAllConnections();
+      },
+    });
+    lifecycle.register({
+      id: "web:sse",
+      kind: "sse",
+      phase: "connections",
+      cancel: () => broadcaster.close(),
+      dispose: async () => {
+        broadcaster.close();
+      },
+      forceDispose: () => broadcaster.close(),
+    });
+    lifecycle.register({
+      id: "web:session",
+      kind: "session",
+      phase: "activity",
+      cancel: () => session.cancel(),
+      dispose: () => session.shutdown(),
+      forceDispose: () => session.cancel(),
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(port, "127.0.0.1", () => resolve());
+    });
+  } catch (error) {
+    await lifecycle.dispose().catch((disposeError: unknown) => {
+      log.warn("web server startup cleanup failed", { error: String(disposeError) });
+    });
+    throw error;
   }
-
-  const server = createWebServer({
-    session,
-    broadcaster,
-    workdir,
-    sessionStore: options.sessionStore,
-    staticDir: options.staticDir ?? null,
-    ...(options.trace !== undefined ? { trace: options.trace } : {}),
-  });
-
-  const port = resolveWebPort(options.port);
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(port, "127.0.0.1", () => resolve());
-  });
 
   const url = `http://127.0.0.1:${port}`;
   log.info("web server started", { url, workdir });
 
+  let closePromise: Promise<void> | null = null;
+  const close = (): Promise<void> => {
+    closePromise ??= lifecycle.dispose();
+    return closePromise;
+  };
+
   return {
     url,
     port,
-    close: async () => {
-      try {
-        if (harness.dispose !== undefined) await harness.dispose();
-        else await harness.jobs?.stop();
-      } finally {
-        await new Promise<void>((resolve, reject) => {
-          server.close((error) => {
-            if (error) reject(error);
-            else {
-              log.info("web server closed");
-              resolve();
-            }
-          });
-        });
-      }
-    },
+    close,
   };
 }

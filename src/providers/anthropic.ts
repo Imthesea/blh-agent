@@ -7,8 +7,8 @@ import type {
   ProviderStreamEvent,
   ToolCall,
   ToolDefinition,
-} from "../core/types.js";
-import { parseToolArguments } from "../core/parse-args.js";
+} from "../contracts/types.js";
+import { parseToolArguments } from "../runtime/parse-args.js";
 import { withRetry } from "./retry.js";
 import { createLogger } from "@blh/logger";
 

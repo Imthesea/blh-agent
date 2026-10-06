@@ -1,0 +1,35 @@
+{
+  "featureDirectories": [
+    "agents",
+    "compaction",
+    "extensions",
+    "goals",
+    "jobs",
+    "memory",
+    "planning",
+    "providers",
+    "security",
+    "session",
+    "tools",
+    "tracing",
+    "workflow"
+  ],
+  "sharedDirectories": ["process", "config"],
+  "compositionRoot": "cli",
+  "allowedFeatureEdges": [
+    ["agents", "planning"],
+    ["agents", "security"],
+    ["agents", "tools"],
+    ["agents", "tracing"],
+    ["compaction", "tools"],
+    ["compaction", "tracing"],
+    ["extensions", "tools"],
+    ["jobs", "tools"],
+    ["memory", "tracing"],
+    ["planning", "tools"],
+    ["security", "tools"],
+    ["security", "tracing"],
+    ["workflow", "tools"],
+    ["workflow", "tracing"]
+  ]
+}

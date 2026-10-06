@@ -1,6 +1,6 @@
 // src/memory/extract.ts
 import { readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
-import type { ChatMessage, ChatProvider } from "../core/types.js";
+import type { ChatMessage, ChatProvider } from "../contracts/types.js";
 import type { Tracer } from "../tracing/tracer.js";
 import { INDEX_NAME, MEMORY_TYPES, MemoryStore } from "./store.js";
 import { extractJsonArray, messageText } from "./text.js";

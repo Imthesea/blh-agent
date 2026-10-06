@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import type { Config } from "../../src/core/types.js";
+import type { Config } from "../../src/contracts/types.js";
 
 afterEach(() => {
   vi.unstubAllEnvs();

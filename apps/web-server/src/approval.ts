@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import * as path from "node:path";
 import type { ApprovalDecision } from "./types.js";
-import type { WebEvent } from "./bridge.js";
+import type { WebEvent } from "./types.js";
 import type { ApprovalRequest, PermissionRule } from "./types.js";
 import { createLogger } from "@blh/logger";
 

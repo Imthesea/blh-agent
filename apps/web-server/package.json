@@ -12,7 +12,9 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@blh/logger": "workspace:*"
+    "@blh/lifecycle": "workspace:*",
+    "@blh/logger": "workspace:*",
+    "@blh/web-protocol": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

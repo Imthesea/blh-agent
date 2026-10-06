@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import type { ServerResponse } from "node:http";
-import { serializeEvent, SSEBroadcaster, type WebEvent } from "../src/bridge.js";
+import { serializeEvent, SSEBroadcaster } from "../src/bridge.js";
+import type { WebEvent } from "../src/types.js";
 
 describe("serializeEvent", () => {
   it("序列化文本增量", () => {
@@ -77,5 +78,27 @@ describe("SSEBroadcaster", () => {
     expect(slowWrite).toHaveBeenCalled();
     expect(slow.end).toHaveBeenCalled();
     expect(broadcaster.clientCount).toBe(0);
+  });
+
+  it("close 后断开全部客户端并拒绝新订阅", () => {
+    const broadcaster = new SSEBroadcaster();
+    const write = vi.fn(() => true);
+    const res = { writeHead: vi.fn(), write, end: vi.fn() } as unknown as ServerResponse;
+    broadcaster.subscribe(res);
+
+    broadcaster.close();
+
+    expect(res.end).toHaveBeenCalled();
+    expect(broadcaster.clientCount).toBe(0);
+    write.mockClear();
+    broadcaster.broadcast({ type: "turn_end" });
+    expect(write).not.toHaveBeenCalled();
+
+    const late = { writeHead: vi.fn(), write: vi.fn(), end: vi.fn() } as unknown as ServerResponse;
+    const off = broadcaster.subscribe(late);
+    expect(late.writeHead).toHaveBeenCalledWith(503, expect.anything());
+    expect(late.end).toHaveBeenCalled();
+    expect(broadcaster.clientCount).toBe(0);
+    off();
   });
 });

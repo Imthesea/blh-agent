@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { ToolRegistry } from "../../src/tools/registry.js";
-import type { Config } from "../../src/core/types.js";
+import type { Config } from "../../src/contracts/types.js";
 
 let dir: string;
 let config: Config;

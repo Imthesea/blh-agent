@@ -1,14 +1,15 @@
 import readline from "node:readline";
-import type { ChatMessage } from "../core/types.js";
-import type { TeamAgents } from "../core/harness.js";
-import type { JobsRuntime } from "../jobs/runtime.js";
-import type { GoalController } from "../goals/controller.js";
-import { EventBus, type AgentEvent } from "../core/events.js";
-import { lastAssistantText } from "../core/loop.js";
+import type { ChatMessage } from "../contracts/types.js";
+import type { GoalCommand as ParsedGoalCommand } from "../contracts/goals.js";
+import type { TeamAgentsPort } from "../runtime/ports.js";
+import type { GoalPort, JobsPort } from "../runtime/ports.js";
+import { EventBus } from "../runtime/events.js";
+import type { AgentEvent } from "../contracts/events.js";
+import { lastAssistantText } from "../runtime/loop.js";
 import { setTerminalWriter } from "@blh/logger";
 
 /** /goal 命令的解析结果："status" 查看 / "clear" 清除 / "set" 设置 / null 不是 goal 命令。 */
-export type GoalCommand = "status" | "clear" | "set" | null;
+type GoalCommand = ParsedGoalCommand | null;
 
 /** repl 依赖的最小会话能力：结构化类型，测试可注入 fake。 */
 export interface TurnRunner {
@@ -19,13 +20,13 @@ export interface TurnRunner {
   /** 可选：跑一轮定时任务。 */
   runScheduledTurn?(messages: ChatMessage[], signal?: AbortSignal): Promise<void>;
   /** 可选：跑一轮团队任务。 */
-  runTeamTurn?(messages: ChatMessage[]): Promise<void>;
+  runTeamTurn?(messages: ChatMessage[], signal?: AbortSignal): Promise<void>;
   /** 可选：后台任务运行时。 */
-  jobs?: JobsRuntime | undefined;
+  jobs?: JobsPort | undefined;
   /** 可选：团队运行时。 */
-  agents?: TeamAgents | undefined;
+  agents?: TeamAgentsPort | undefined;
   /** 可选：目标控制器。 */
-  goal?: GoalController | undefined;
+  goal?: GoalPort | undefined;
   /** 可选：把输入解析成 /goal 命令。 */
   goalCommand?: (text: string) => GoalCommand;
   /** 可选：dream 是否到期。 */
@@ -191,9 +192,9 @@ export async function repl(
     }
     // 接上团队任务：注册一个回调，队友消息到达时跑一轮团队任务，同样打印新增回复。
     if (agents !== undefined && runTeamTurn !== undefined) {
-      agents.setTeamTurn?.(async () => {
+      agents.setTeamTurn?.(async (signal) => {
         const before = messages.length;
-        await runTeamTurn(messages);
+        await runTeamTurn(messages, signal);
         const reply = lastAssistantText(messages, before);
         if (reply) io.print(reply);
       });

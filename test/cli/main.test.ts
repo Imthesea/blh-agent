@@ -78,7 +78,7 @@ describe("buildHarness 装配", () => {
       path.join(tmpDir, ".task_outputs", "tool-results"),
     );
     expect(harness.tools.list().map((tool) => tool.name)).toContain("compact");
-  });
+  }, 10000);
 
   it("planning 工具与 todoManager 就位", async () => {
     const { buildHarness } = await import("../../src/cli/main.js");

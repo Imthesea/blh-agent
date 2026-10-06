@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import type { Config, ToolDefinition } from "../../src/core/types.js";
+import type { Config, ToolDefinition } from "../../src/contracts/types.js";
 
 const config: Config = {
   apiKey: "sk-test",

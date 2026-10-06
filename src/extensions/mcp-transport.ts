@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
 
 // 一条「已解析好的」服务器响应消息：可能有 id（表示是对某个请求的回复），也可能没有（是通知）。
@@ -28,9 +28,11 @@ export interface Transport {
    * 注意：这里的 resolve 不代表「服务器已回复」，服务器回复是通过 onMessage 回调交上来的。
    * timeoutMs 可选：http 用它给本次请求设网络超时；stdio 忽略它（超时由上层统一管理）。
    */
-  send(msg: unknown, timeoutMs?: number): Promise<void>;
+  send(msg: unknown, timeoutMs?: number, signal?: AbortSignal): Promise<void>;
   /** 关闭底层连接。 */
-  close(): Promise<void>;
+  close(force?: boolean): Promise<void>;
+  /** 立即释放底层连接；即使 close() 正在等待优雅退出，也必须能升级为强杀。 */
+  forceClose(): Promise<void>;
   /** 注册「收到服务器消息」的回调。 */
   onMessage(handler: (msg: TransportMessage) => void): void;
   /** 注册「连接断开或出错」的回调（stdio 的进程退出、http 无法连接等）。 */
@@ -55,6 +57,8 @@ function needsShell(command: string): boolean {
 export class StdioTransport implements Transport {
   // 子进程句柄：指向已启动的 MCP 服务器进程，没启动时是 null。
   private process: ChildProcessWithoutNullStreams | null = null;
+  private activeProcess: ChildProcessWithoutNullStreams | null = null;
+  private closePromise: Promise<void> | null = null;
   // 「收到消息」回调，由上层（MCPClient）在构造时注册。
   private messageHandler: ((msg: TransportMessage) => void) | null = null;
   // 「连接断开」回调，进程报错或退出时触发。
@@ -76,20 +80,27 @@ export class StdioTransport implements Transport {
 
   async start(): Promise<void> {
     const label = this.name ?? this.command;
+    if (this.process !== null || this.activeProcess !== null || this.closePromise !== null) {
+      throw new Error(`MCP server '${label}' is already started`);
+    }
     // 用 spawn 启动子进程，三个标准流都走管道，方便我们读写。
     // Windows 上要开 shell，否则像 npx 这种实际是 .cmd 批处理的命令会因找不到文件而启动失败。
-    this.process = spawn(this.command, this.args, {
+    const child = spawn(this.command, this.args, {
       stdio: ["pipe", "pipe", "pipe"],
       shell: needsShell(this.command),
     });
+    this.process = child;
+    this.activeProcess = child;
     // 子进程启动失败（比如命令路径写错、进程被杀）时，通知上层「连接断了」。
-    this.process.on("error", (err) =>
+    child.on("error", (err) =>
       this.disconnectHandler?.(err instanceof Error ? err : new Error(String(err))),
     );
     // 子进程退出时，同样通知上层，避免还在等待的请求一直卡着。
-    this.process.on("exit", (code) =>
-      this.disconnectHandler?.(new Error(`MCP server '${label}' exited with code ${code}`)),
-    );
+    child.once("exit", (code) => {
+      if (this.process === child) this.process = null;
+      if (this.activeProcess === child) this.activeProcess = null;
+      this.disconnectHandler?.(new Error(`MCP server '${label}' exited with code ${code}`));
+    });
     // 逐行读取子进程的 stdout，每行解析成一个 JSON 对象，交给上层的 onMessage 回调。
     const rl = createInterface({ input: this.process.stdout });
     rl.on("line", (line) => {
@@ -103,20 +114,34 @@ export class StdioTransport implements Transport {
     });
   }
 
-  async send(msg: unknown, _timeoutMs?: number): Promise<void> {
+  async send(
+    msg: unknown,
+    _timeoutMs?: number,
+    signal?: AbortSignal,
+  ): Promise<void> {
     const p = this.process;
     if (p === null) throw new Error(`MCP server '${this.name ?? this.command}' is not started`);
+    if (signal?.aborted) throw new Error("MCP request cancelled");
     // 把消息序列化成 JSON 字符串，写到子进程 stdin，末尾加换行。
     p.stdin.write(JSON.stringify(msg) + "\n");
   }
 
-  async close(): Promise<void> {
-    const p = this.process;
-    if (p === null) return; // 没启动过，直接返回。
-    // 先关掉 stdin 写入端，等于告诉子进程「我这边不会再发请求了」。
-    p.stdin.end();
-    // 等待子进程真正退出，最多等 5 秒；超时就强制 kill 掉。
-    await new Promise<void>((resolve) => {
+  async close(force = false): Promise<void> {
+    if (this.closePromise !== null) {
+      if (force) await this.forceClose();
+      return this.closePromise;
+    }
+
+    const child = this.process;
+    if (child === null) return;
+
+    this.process = null;
+    this.closePromise = new Promise<void>((resolve) => {
+      if (force) {
+        void this.forceClose().finally(resolve);
+        return;
+      }
+
       let settled = false;
       const done = () => {
         if (!settled) {
@@ -124,20 +149,42 @@ export class StdioTransport implements Transport {
           resolve();
         }
       };
-      // 兜底定时器：5 秒内还没退出就强制结束进程。
       const timer = setTimeout(() => {
-        p.kill();
-        done();
+        void killProcessTree(child).then(done);
       }, 5000);
-      // 正常退出时，取消定时器并结束等待。
-      p.once("exit", () => {
+
+      child.once("exit", () => {
         clearTimeout(timer);
         done();
       });
+      child.stdin.end();
     });
-    // 进程已经关闭，清空句柄。
-    this.process = null;
+    return this.closePromise;
   }
+
+  async forceClose(): Promise<void> {
+    const child = this.activeProcess;
+    this.process = null;
+    this.activeProcess = null;
+    if (child === null) return;
+    await killProcessTree(child);
+  }
+}
+
+function killProcessTree(child: ChildProcessWithoutNullStreams): Promise<void> {
+  return new Promise((resolve) => {
+    if (child.pid === undefined) return resolve();
+    if (globalThis.process.platform === "win32") {
+      execFile("taskkill", ["/pid", String(child.pid), "/T", "/F"], () => resolve());
+      return;
+    }
+    try {
+      globalThis.process.kill(-child.pid, "SIGKILL");
+    } catch {
+      child.kill("SIGKILL");
+    }
+    resolve();
+  });
 }
 
 // 从一段 SSE（Server-Sent Events）文本里，找出「带 id 的那条 JSON-RPC 响应」并返回。
@@ -192,20 +239,36 @@ export class HttpTransport implements Transport {
     }
   }
 
-  async send(msg: unknown, timeoutMs?: number): Promise<void> {
+  async send(
+    msg: unknown,
+    timeoutMs?: number,
+    signal?: AbortSignal,
+  ): Promise<void> {
     const m = msg as { id?: number; method?: string; params?: Record<string, unknown> };
+    if (signal?.aborted) throw new Error("MCP request cancelled");
     // 发一次 HTTP POST，带上规范要求的各种头。
+    const timeout = timeoutMs ?? this.timeout;
+    const controller = new AbortController();
+    const timer = setTimeout(
+      () => controller.abort(new Error(`MCP HTTP request timed out after ${timeout}ms`)),
+      timeout,
+    );
+    const onAbort = () => controller.abort(signal?.reason);
+    signal?.addEventListener("abort", onAbort, { once: true });
     let res: Response;
     try {
       res = await fetch(this.url, {
         method: "POST",
         headers: this.buildHeaders(m),
         body: JSON.stringify(msg),
-        signal: AbortSignal.timeout(timeoutMs ?? this.timeout),
+        signal: controller.signal,
       });
     } catch (err) {
       // 网络错误 / 超时：把错误抛给上层，由上层 reject 对应的请求。
       throw err instanceof Error ? err : new Error(String(err));
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
     }
     // 服务器可能在 initialize 响应里返回会话 id，记下来供后续请求使用。
     const sid = res.headers.get("Mcp-Session-Id");
@@ -229,7 +292,11 @@ export class HttpTransport implements Transport {
     this.messageHandler?.(data);
   }
 
-  async close(): Promise<void> {
+  async close(_force = false): Promise<void> {
+    // http 没有常驻连接，无需清理。
+  }
+
+  async forceClose(): Promise<void> {
     // http 没有常驻连接，无需清理。
   }
 

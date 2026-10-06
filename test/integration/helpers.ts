@@ -1,4 +1,4 @@
-import type { ChatMessage, ChatProvider, ChatUsage, ToolDefinition } from "../../src/core/types.js";
+import type { ChatMessage, ChatProvider, ChatUsage, ToolDefinition } from "../../src/contracts/types.js";
 
 /** 脚本化 provider：每次 chat 弹出队列头部消息 */
 export class MockProvider implements ChatProvider {
@@ -9,6 +9,15 @@ export class MockProvider implements ChatProvider {
     return this.usage;
   }
   constructor(private readonly script: ChatMessage[]) {}
+  async chatWithUsage(
+    _messages: ChatMessage[],
+    _tools: ToolDefinition[],
+    _maxTokens?: number,
+    _signal?: AbortSignal,
+  ): Promise<{ message: ChatMessage; usage: ChatUsage | null }> {
+    const message = await this.chat(_messages, _tools, _maxTokens, _signal);
+    return { message, usage: this.usage ?? null };
+  }
   async chat(
     _messages: ChatMessage[],
     _tools: ToolDefinition[],

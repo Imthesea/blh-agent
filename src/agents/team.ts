@@ -1,14 +1,15 @@
 import * as path from "node:path";
 import { createLogger } from "@blh/logger";
-import type { ChatMessage, ChatProvider, Config } from "../core/types.js";
-import type { HookBus } from "../core/hooks.js";
-import type { AgentLock } from "../core/agent-lock.js";
+import type { ChatMessage, ChatProvider, Config } from "../contracts/types.js";
+import type { HookBus } from "../runtime/hooks.js";
+import type { AgentLock } from "../runtime/agent-lock.js";
 import type { Task, TaskStore } from "../planning/tasks.js";
 import { isValidAgentName, MessageBus } from "./bus.js";
 import type { BusMessage } from "./bus.js";
 import { TeammateRuntime } from "./teammate.js";
 import type { TeammateTeam } from "./teammate.js";
 import { createWorktree as createWorktreeOp, taskCwd as taskCwdOp } from "./worktree.js";
+import type { Tracer } from "../tracing/tracer.js";
 
 const RESERVED_TEAMMATE_NAMES = new Set(["lead", "agent"]);
 
@@ -41,8 +42,13 @@ export class TeamRuntime implements TeammateTeam {
   readonly assignmentVersions = new Map<string, number>();
   started = false;
 
-  private teamTurn: (() => Promise<void>) | null = null;
+  private teamTurn: ((signal: AbortSignal) => Promise<void>) | null = null;
   private leadTimer: NodeJS.Timeout | undefined;
+  private leadController: AbortController | null = null;
+  private leadRun: Promise<void> | null = null;
+  private readonly teammateRuns = new Map<string, Promise<void>>();
+  private readonly teammateControllers = new Map<string, AbortController>();
+  private stopping = false;
 
   /**
    * 构造函数：把团队运行时要用的所有"零件"存起来备用。
@@ -65,6 +71,7 @@ export class TeamRuntime implements TeammateTeam {
     readonly provider: ChatProvider,
     readonly config: Config,
     readonly hooks: HookBus,
+    readonly tracer?: Tracer,
   ) {}
 
   // ---- 生命周期 ----
@@ -75,7 +82,7 @@ export class TeamRuntime implements TeammateTeam {
    * 团队启动后，后台定时器发现 lead 收件箱有消息，就会调用这个回调，
    * 让 lead 出来处理队友发来的消息。
    */
-  setTeamTurn(callback: () => Promise<void>): void {
+  setTeamTurn(callback: (signal: AbortSignal) => Promise<void>): void {
     this.teamTurn = callback;
   }
 
@@ -88,6 +95,7 @@ export class TeamRuntime implements TeammateTeam {
    */
   start(): void {
     if (this.started) return;
+    if (this.stopping) return;
     this.started = true;
     this.leadTimer = setInterval(() => {
       void this.leadTick();
@@ -100,16 +108,35 @@ export class TeamRuntime implements TeammateTeam {
    *
    * 先停掉后台的定时器（不再检查收件箱），
    * 然后给每一个还在干活的队友发一条"关闭请求"，让它们各自收工。
-   * 如果团队本来就没启动，就直接返回。
+   * 这是一个可恢复的停止动作，后续仍然可以重新 start()。
    */
   stop(): void {
-    if (!this.started) return;
     this.started = false;
     if (this.leadTimer !== undefined) clearInterval(this.leadTimer);
     this.leadTimer = undefined;
     for (const name of [...this.activeTeammates.keys()]) {
       this.requestShutdown(name);
     }
+  }
+
+  cancel(): void {
+    this.stopping = true;
+    this.started = false;
+    if (this.leadTimer !== undefined) clearInterval(this.leadTimer);
+    this.leadTimer = undefined;
+    this.leadController?.abort();
+    for (const controller of [...this.teammateControllers.values()]) controller.abort();
+  }
+
+  async dispose(): Promise<void> {
+    this.cancel();
+    const runs = [...this.teammateRuns.values()];
+    if (this.leadRun !== null) runs.push(this.leadRun);
+    await Promise.all(runs);
+  }
+
+  forceDispose(): void {
+    this.cancel();
   }
 
   /**
@@ -125,15 +152,24 @@ export class TeamRuntime implements TeammateTeam {
   private async leadTick(): Promise<void> {
     if (!this.bus.peek("lead")) return;
     if (!this.agentLock.tryAcquire()) return;
-    try {
-      if (this.teamTurn !== null) await this.teamTurn();
-    } catch (error) {
-      log.warn("lead tick failed", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    } finally {
-      this.agentLock.release();
-    }
+    const controller = new AbortController();
+    const run = (async () => {
+      try {
+        if (this.teamTurn !== null) await this.teamTurn(controller.signal);
+      } catch (error) {
+        log.warn("lead tick failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      } finally {
+        if (this.leadController === controller) this.leadController = null;
+        this.agentLock.release();
+      }
+    })();
+    this.leadController = controller;
+    this.leadRun = run;
+    void run.finally(() => {
+      if (this.leadRun === run) this.leadRun = null;
+    });
   }
 
   // ---- bus 委托（teammate 侧） ----
@@ -556,6 +592,7 @@ export class TeamRuntime implements TeammateTeam {
    * 返回一段文字，说明队友已创建、以及它带没带初始任务。
    */
   spawnTeammate(name: string, role: string, prompt: string, taskId?: string, requirePlan = false): string {
+    if (this.stopping) return `Cannot spawn teammate '${name}': team is shutting down`;
     if (!isValidAgentName(name)) {
       return "Invalid teammate name: use 1-64 letters, digits, underscores, or dashes";
     }
@@ -588,8 +625,16 @@ export class TeamRuntime implements TeammateTeam {
       this.hooks,
       this.store,
       this,
+      this.tracer,
     );
-    void runtime.run();
+    const controller = new AbortController();
+    const run = runtime.run(controller.signal).finally(() => {
+      this.teammateRuns.delete(name);
+      this.teammateControllers.delete(name);
+    });
+    this.teammateControllers.set(name, controller);
+    this.teammateRuns.set(name, run);
+    void run;
     const assigned = taskId !== undefined ? ` for ${taskId}` : " without an initial Task";
     return `Teammate '${name}' spawned as ${role}${assigned}. End this turn; the runtime will deliver its events.`;
   }

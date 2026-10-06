@@ -1,4 +1,4 @@
-import type { ChatMessage, ChatProvider } from "../core/types.js";
+import type { ChatMessage, ChatProvider } from "../contracts/types.js";
 import type { Tracer } from "../tracing/tracer.js";
 import type { MemoryRecord, MemoryStore } from "./store.js";
 import { extractJsonArray, messageText } from "./text.js";

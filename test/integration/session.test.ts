@@ -2,13 +2,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { Harness } from "../../src/core/harness.js";
-import { HookBus } from "../../src/core/hooks.js";
+import { Harness } from "../../src/runtime/harness.js";
+import { HookBus } from "../../src/runtime/hooks.js";
 import { ToolRegistry } from "../../src/tools/registry.js";
 import { ContextCompactor } from "../../src/compaction/compactor.js";
 import { SessionStore } from "../../src/session/store.js";
 import { MockProvider, makeTextMessage, makeToolCallMessage } from "./helpers.js";
-import type { Config } from "../../src/core/types.js";
+import type { Config } from "../../src/contracts/types.js";
 
 let tempDir: string;
 let config: Config;

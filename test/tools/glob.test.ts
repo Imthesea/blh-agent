@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { removeDirWithRetries } from "../helpers/fs.js";
 
 let dir: string;
 
@@ -14,7 +15,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await fs.rm(dir, { recursive: true, force: true });
+  await removeDirWithRetries(dir);
 });
 
 describe("fnmatch", () => {
@@ -52,9 +53,11 @@ describe("glob", () => {
   });
 
   it("caps at 200 results", async () => {
-    for (let i = 0; i < 210; i++) {
-      await fs.writeFile(path.join(dir, `f${String(i).padStart(3, "0")}.log`), "");
-    }
+    await Promise.all(
+      Array.from({ length: 210 }, (_, index) =>
+        fs.writeFile(path.join(dir, `f${String(index).padStart(3, "0")}.log`), ""),
+      ),
+    );
     const { glob } = await import("../../src/tools/glob.js");
     const out = await glob(dir, { pattern: "*.log" });
     expect(out.split("\n")).toHaveLength(200);

@@ -1,7 +1,7 @@
-import { POST_TOOL_USE, PRE_TOOL_USE } from "../core/hooks.js";
-import type { HookBus } from "../core/hooks.js";
-import { parseToolArguments } from "../core/parse-args.js";
-import type { ChatMessage, ChatProvider, Config, ToolCall } from "../core/types.js";
+import type { HookBus } from "../runtime/hooks.js";
+import type { ChatMessage, ChatProvider, Config } from "../contracts/types.js";
+import { runAgentLoop } from "../runtime/loop.js";
+import type { AgentLoopRuntime } from "../runtime/ports.js";
 import { registerBuiltinTools } from "../tools/index.js";
 import { ToolRegistry } from "../tools/registry.js";
 import { summarize, type Tracer } from "../tracing/tracer.js";
@@ -33,42 +33,45 @@ export class SubagentRunner {
    * 超过 30 轮还没结束，就返回一条提示说明。
    */
   async run(prompt: string, signal?: AbortSignal): Promise<string> {
+    if (signal?.aborted) return "Subagent cancelled.";
     const start = Date.now();
-    this.tracer?.event("subagent", { name: "subagent", status: "spawn", task: summarize(prompt, 200) });
+    const tracer = this.tracer?.scoped("subagent");
+    tracer?.event("subagent", { name: "subagent", status: "spawn", task: summarize(prompt, 200) });
     const messages: ChatMessage[] = [
       { role: "system", content: SUB_SYSTEM },
       { role: "user", content: prompt },
     ];
+    const runtime: AgentLoopRuntime = {
+      systemPrompt: SUB_SYSTEM,
+      config: this.config,
+      provider: this.provider,
+      tools: this.tools,
+      hooks: this.hooks,
+      tracer,
+    };
     try {
-      for (let turn = 0; turn < MAX_SUBAGENT_TURNS; turn++) {
-        if (signal?.aborted) return "Subagent cancelled.";
-        const assistant = await this.provider.chat(messages, this.tools.list(), undefined, signal);
-        messages.push(assistant);
-        const toolCalls: ToolCall[] = assistant.tool_calls ?? [];
-        if (toolCalls.length === 0) {
-          this.tracer?.event("subagent", { name: "subagent", status: "result", latency_ms: Date.now() - start });
-          return assistant.content || "(no summary)";
-        }
-        for (const call of toolCalls) {
-          if (signal?.aborted) return "Subagent cancelled.";
-          const name = call.function.name;
-          const input = parseToolArguments(call.function.arguments);
-          const blocked = await this.hooks.firstBlock(PRE_TOOL_USE, { name, input });
-          let result: string;
-          if (blocked !== null) {
-            result = blocked;
-          } else {
-            result = await this.tools.dispatch(name, input, signal);
-            await this.hooks.trigger(POST_TOOL_USE, { name, input, output: result });
-          }
-          messages.push({ role: "tool", tool_call_id: call.id, content: result });
-        }
+      const result = await runAgentLoop(
+        runtime,
+        messages,
+        prompt,
+        undefined,
+        signal,
+        { maxTurns: MAX_SUBAGENT_TURNS },
+      );
+      if (result.status === "cancelled") return "Subagent cancelled.";
+      if (result.status === "max_turns") {
+        tracer?.event("subagent", {
+          name: "subagent",
+          status: "result",
+          latency_ms: Date.now() - start,
+        });
+        return `Subagent stopped after ${MAX_SUBAGENT_TURNS} turns without a final answer.`;
       }
+      tracer?.event("subagent", { name: "subagent", status: "result", latency_ms: Date.now() - start });
+      return result.finalAssistant?.content || "(no summary)";
     } catch (error) {
       if (signal?.aborted) return "Subagent cancelled.";
       throw error;
     }
-    this.tracer?.event("subagent", { name: "subagent", status: "result", latency_ms: Date.now() - start });
-    return "Subagent stopped after 30 turns without a final answer.";
   }
 }

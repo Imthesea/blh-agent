@@ -3,9 +3,15 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SubagentRunner } from "../../src/agents/subagent.js";
-import { HookBus, PRE_TOOL_USE } from "../../src/core/hooks.js";
+import { HookBus } from "../../src/runtime/hooks.js";
+import { PRE_TOOL_USE } from "../../src/contracts/hooks.js";
 import { Tracer } from "../../src/tracing/tracer.js";
-import type { ChatMessage, ChatProvider, Config, ToolDefinition } from "../../src/core/types.js";
+import type {
+  ChatMessage,
+  ChatProvider,
+  Config,
+  ToolDefinition,
+} from "../../src/contracts/types.js";
 import { MockProvider, makeTextMessage, makeToolCallMessage } from "../integration/helpers.js";
 
 let tmpDir: string;
@@ -57,6 +63,96 @@ describe("SubagentRunner", () => {
     const controller = new AbortController();
     await expect(runner.run("record the signal", controller.signal)).resolves.toBe("done");
     expect(toolSignal).toBe(controller.signal);
+  });
+
+  it("uses response-scoped usage and traces it under the subagent sid", async () => {
+    class UsageProvider implements ChatProvider {
+      async chat(): Promise<ChatMessage> {
+        throw new Error("chat should not be used");
+      }
+
+      async chatWithUsage(): Promise<{
+        message: ChatMessage;
+        usage: { promptTokens: number; completionTokens: number } | null;
+      }> {
+        return {
+          message: makeTextMessage("done"),
+          usage: { promptTokens: 11, completionTokens: 7 },
+        };
+      }
+
+      lastUsage(): { promptTokens: number; completionTokens: number } {
+        return { promptTokens: 999, completionTokens: 999 };
+      }
+    }
+
+    const tracer = new Tracer(tmpDir);
+    const runner = new SubagentRunner(
+      new UsageProvider(),
+      config,
+      new HookBus(),
+      tracer,
+    );
+
+    await expect(runner.run("do it")).resolves.toBe("done");
+
+    const traceDir = path.join(tmpDir, ".blh", "traces");
+    const events = readdirSync(traceDir)
+      .filter((file) => file.endsWith(".jsonl"))
+      .flatMap((file) =>
+        readFileSync(path.join(traceDir, file), "utf8")
+          .split("\n")
+          .filter(Boolean)
+          .map((line) => JSON.parse(line) as Record<string, unknown>),
+      );
+    const usageFile = path.join(tmpDir, ".blh", "usage.jsonl");
+    const usage = readFileSync(usageFile, "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+
+    expect(events.map((event) => event["type"])).toEqual([
+      "subagent",
+      "turn_start",
+      "llm",
+      "turn_end",
+      "subagent",
+    ]);
+    expect(events.every((event) => event["sid"] === "subagent")).toBe(true);
+    expect(usage).toEqual([
+      expect.objectContaining({ sid: "subagent", in: 11, out: 7 }),
+    ]);
+  });
+
+  it("returns cancellation when the model call is aborted", async () => {
+    class AbortableProvider implements ChatProvider {
+      async chat(
+        _messages: ChatMessage[],
+        _tools: ToolDefinition[],
+        _maxTokens?: number,
+        signal?: AbortSignal,
+      ): Promise<ChatMessage> {
+        return new Promise((_resolve, reject) => {
+          signal?.addEventListener(
+            "abort",
+            () =>
+              reject(
+                Object.assign(new Error("cancelled"), { name: "AbortError" }),
+              ),
+            { once: true },
+          );
+        });
+      }
+    }
+
+    const provider = new AbortableProvider();
+    const runner = new SubagentRunner(provider, config, new HookBus());
+    const controller = new AbortController();
+    const running = runner.run("do it", controller.signal);
+    await new Promise((resolve) => setImmediate(resolve));
+    controller.abort();
+
+    await expect(running).resolves.toBe("Subagent cancelled.");
   });
   it("returns without calling the model when already aborted", async () => {
     const provider = new MockProvider([makeTextMessage("should not run")]);
@@ -113,8 +209,8 @@ describe("SubagentRunner", () => {
       .flatMap((f) =>
         readFileSync(path.join(dir, f), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>),
       );
-    expect(events[0]).toMatchObject({ type: "subagent", status: "spawn", task: "do it" });
-    expect(events[1]).toMatchObject({ type: "subagent", status: "result" });
-    expect(typeof events[1]?.["latency_ms"]).toBe("number");
+    expect(events[0]).toMatchObject({ type: "subagent", status: "spawn", task: "do it", sid: "subagent" });
+    expect(events.at(-1)).toMatchObject({ type: "subagent", status: "result", sid: "subagent" });
+    expect(typeof events.at(-1)?.["latency_ms"]).toBe("number");
   });
 });
