@@ -1,0 +1,9 @@
+{"id":"write-and-read","input":"创建 hello.txt 写入 world 并读回","expect_tools":["write_file","read_file"],"expect_in_args":{"write_file":{"path":"hello.txt"},"read_file":{"path":"hello.txt"}},"expect_min_tool_calls":{"write_file":1},"expect_files":[{"path":"hello.txt","contains":"world"}]}
+{"id":"write-two-files","input":"创建 a.txt 和 b.txt 两个文件","expect_tools":["write_file"],"expect_min_tool_calls":{"write_file":2},"expect_files":[{"path":"a.txt"},{"path":"b.txt"}]}
+{"id":"glob-ts","input":"列出所有 ts 文件","expect_tools":["glob"],"expect_in_args":{"glob":{"pattern":"*.ts"}}}
+{"id":"bash-echo","input":"用 bash 输出 hello","expect_tools":["bash"],"expect_in_args":{"bash":{"command":"echo hello"}}}
+{"id":"chitchat","input":"你好，介绍一下你自己","expect_not_tools":["write_file","bash"],"expect_final_output":"blh"}
+{"id":"single-write","input":"只创建一个文件，不要重复创建","expect_tools":["write_file"],"expect_max_tool_calls":{"write_file":1}}
+{"id":"safe-bash","input":"用 bash 打印 hello","expect_tools":["bash"],"expect_safe":true}
+{"id":"report-content","input":"报告一下结果","expect_final_output":"world"}
+{"id":"submit-result","input":"创建 hello.txt 并用 submit_result 提交完成结论","expect_tools":["write_file","submit_result"],"expect_in_args":{"submit_result":{"verdict":"done"}},"expect_files":[{"path":"hello.txt","contains":"world"}]}

@@ -32,7 +32,7 @@ import { TeamRuntime } from "../agents/team.js";
 import { registerAgentTools } from "../agents/tools.js";
 import { SkillLoader } from "../extensions/skills.js";
 import { MCPRegistry } from "../extensions/mcp.js";
-import type { McpServerConfig } from "../contracts/types.js";
+import type { ChatProvider, McpServerConfig } from "../contracts/types.js";
 import { registerExtensionTools } from "../extensions/tools.js";
 import { Extensions } from "../extensions/index.js";
 import { PromptGoalEvaluator } from "../goals/evaluator.js";
@@ -72,7 +72,8 @@ async function connectConfiguredMcp(
  * @param skipPermissions 是否跳过所有权限检查（默认 false）。为 true 时使用「全部放行」的规则集。
  * @param opts 额外选项：
  *  - userRules：用户自定义的权限规则列表，会被插入到默认规则中；
- *  - persistRule：当用户新批准一条规则时，用于把这条规则持久化保存的回调。
+ *  - persistRule：当用户新批准一条规则时，用于把这条规则持久化保存的回调；
+ *  - provider：注入自定义模型提供者（评测/测试用），默认仍按配置创建。
  */
 export function buildHarness(
   workdir?: string,
@@ -83,6 +84,7 @@ export function buildHarness(
     userRules?: PermissionRule[];
     persistRule?: (rule: PermissionRule) => void;
     approvalSource?: "cli" | "web";
+    provider?: ChatProvider;
   },
 ): Harness {
   const lifecycle = new LifecycleManager();
@@ -101,7 +103,7 @@ export function buildHarness(
   const tracer = new Tracer(config.workdir);
 
   // 创建模型提供者：按 config.provider 走对应厂商适配器（这是所有「用模型」能力的底层）。
-  const provider = createProvider(config, diagnostics);
+  const provider = opts?.provider ?? createProvider(config, diagnostics);
 
   // 统一上报启动诊断：错误阻断启动，警告仅提示。
   if (diagnostics.hasErrors()) {

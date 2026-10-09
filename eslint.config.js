@@ -3,7 +3,7 @@ import tsparser from "@typescript-eslint/parser";
 
 export default [
   {
-    files: ["src/**/*.ts", "test/**/*.ts"],
+    files: ["src/**/*.ts", "test/**/*.ts", "evals/**/*.ts"],
     languageOptions: { parser: tsparser },
     plugins: { "@typescript-eslint": tseslint },
     rules: {

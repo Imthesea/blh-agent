@@ -31,6 +31,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "lint": "eslint . && node scripts/check-architecture.mjs",
+    "eval:live": "tsx evals/live-cli.ts",
     "dev": "tsx src/cli/main.ts",
     "dev:yes": "tsx src/cli/main.ts --dangerously-skip-permissions",
     "web:server": "tsx src/cli/main.ts web --dev",
@@ -47,9 +48,11 @@
     "yaml": "^2.9.1"
   },
   "devDependencies": {
+    "@sentry/node": "^11.4.0",
     "@types/node": "^20.0.0",
     "@typescript-eslint/eslint-plugin": "^8.0.0",
     "@typescript-eslint/parser": "^8.0.0",
+    "deepeval": "^0.9.22",
     "eslint": "^9.0.0",
     "tsx": "^4.0.0",
     "typescript": "^5.5.0",

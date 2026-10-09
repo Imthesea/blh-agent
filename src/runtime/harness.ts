@@ -44,8 +44,10 @@ export class Harness implements AgentLoopRuntime {
     readonly workflow?: string,
     readonly tracer?: TracerPort,
     readonly lifecycle?: LifecycleManager,
+    baseSystemPrompt?: string,
   ) {
     const base =
+      baseSystemPrompt ??
       `你是 blh，一个编程智能体。工作目录：${config.workdir}。 ` +
       "使用提供的工具替用户办事。 " +
       "开始一个多步骤任务前，先用 todo_write 或 create_task 做计划，并在过程中更新状态。 " +
