@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import path from "node:path";
+import { resolveToCwd } from "./path-utils.js";
 
 export class PathEscapeError extends Error {}
 
@@ -8,7 +9,8 @@ export class PathEscapeError extends Error {}
 const MAX_READ_BYTES = 10 * 1024 * 1024;
 
 export function safePath(workdir: string, inputPath: string): string {
-  const resolved = path.resolve(workdir, inputPath);
+  // 先做 ~ 展开、Unicode 空格归一化、file:// / Windows shell 路径转换，再做越界校验
+  const resolved = resolveToCwd(inputPath, workdir);
   const root = path.resolve(workdir);
   if (resolved !== root && !resolved.startsWith(root + path.sep)) {
     throw new PathEscapeError(`path escapes workdir: ${inputPath}`);

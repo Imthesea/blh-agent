@@ -1,4 +1,6 @@
 import { StringDecoder } from "node:string_decoder";
+import { sanitizeSurrogates } from "../contracts/sanitize-unicode.js";
+import { truncateChars } from "../contracts/truncate.js";
 
 /** Captures decoded process output while retaining at most maxChars in memory. */
 export class BoundedOutputCollector {
@@ -35,9 +37,10 @@ export class BoundedOutputCollector {
 
   /** 累加总字符数，并只保留不超过 maxChars 的前缀部分，其余直接丢弃。 */
   private capture(text: string): void {
-    this.totalChars += text.length;
+    const clean = sanitizeSurrogates(text);
+    this.totalChars += clean.length;
     if (this.retained.length < this.maxChars) {
-      this.retained += text.slice(0, this.maxChars - this.retained.length);
+      this.retained += clean.slice(0, this.maxChars - this.retained.length);
     }
   }
 }
@@ -45,7 +48,7 @@ export class BoundedOutputCollector {
 /** 若总字符数超过上限则截断输出，并追加 "... [truncated, N chars total]" 标记；未超限则原样返回。 */
 export function formatTruncatedOutput(output: string, totalChars: number, maxChars: number): string {
   if (totalChars <= maxChars) return output;
-  return output.slice(0, maxChars) + `\n... [truncated, ${totalChars} chars total]`;
+  return truncateChars(output, maxChars) + `\n... [truncated, ${totalChars} chars total]`;
 }
 
 /**
