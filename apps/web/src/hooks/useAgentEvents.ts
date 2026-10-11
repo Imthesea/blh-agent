@@ -88,6 +88,7 @@ export function useAgentEvents(): AgentState {
   const refreshSeq = useRef(0);
   const disposed = useRef(false);
   const streamBuf = useRef<string[]>([]);
+  const reconnecting = useRef(false);
 
   useEffect(() => {
     disposed.current = false;
@@ -193,12 +194,18 @@ export function useAgentEvents(): AgentState {
       },
       (status) => {
         if (status === "error") {
+          reconnecting.current = true;
           setSubmitting(false);
           setBusy(false);
           setStreaming("");
           streamBuf.current = [];
           setError(RECONNECT_MESSAGE);
         } else {
+          // 重连成功后重新拉取权威状态，补回断线期间错过的进度。
+          if (reconnecting.current) {
+            reconnecting.current = false;
+            void refresh();
+          }
           setError((prev) => (prev === RECONNECT_MESSAGE ? null : prev));
         }
       },

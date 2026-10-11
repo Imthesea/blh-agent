@@ -2,9 +2,40 @@ import { StringDecoder } from "node:string_decoder";
 import { sanitizeSurrogates } from "../contracts/sanitize-unicode.js";
 import { truncateChars } from "../contracts/truncate.js";
 
+/** UTF-8 单字符最多 4 字节，按这个上限预留缓冲，避免多字节字符被拦腰截断。 */
+const MAX_UTF8_CHAR_BYTES = 4;
+
+/** 统计文本里的替换字符（U+FFFD）数量，用于判断编码是否匹配。 */
+function countReplacementChars(text: string): number {
+  let count = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (text.charCodeAt(i) === 0xfffd) count += 1;
+  }
+  return count;
+}
+
+/**
+ * 解码子进程输出：优先按 UTF-8；若出现替换字符，再按 GBK 解码，
+ * 取「替换字符更少」的结果。用于兼容中文 Windows 上 cmd.exe 按 GBK 输出的情况。
+ */
+function decodeOutput(buffer: Buffer): string {
+  const utf8 = new TextDecoder("utf-8").decode(buffer);
+  const utf8Bad = countReplacementChars(utf8);
+  if (utf8Bad === 0) return utf8;
+  try {
+    const gbk = new TextDecoder("gbk").decode(buffer);
+    return countReplacementChars(gbk) < utf8Bad ? gbk : utf8;
+  } catch {
+    // 运行环境不支持 gbk 解码时，退回 UTF-8 结果。
+    return utf8;
+  }
+}
+
 /** Captures decoded process output while retaining at most maxChars in memory. */
 export class BoundedOutputCollector {
-  private readonly decoder = new StringDecoder("utf8");
+  private readonly counter = new StringDecoder("utf8");
+  private readonly chunks: Buffer[] = [];
+  private bufferedBytes = 0;
   private retained = "";
   private totalChars = 0;
 
@@ -17,12 +48,23 @@ export class BoundedOutputCollector {
 
   /** 解码一块 Buffer 输出并追加到保留缓冲区。 */
   append(chunk: Buffer): void {
-    this.capture(this.decoder.write(chunk));
+    // 用 UTF-8 增量解码统计总字符数（不保留文本），保证 UTF-8 输出的计数精确。
+    this.totalChars += this.counter.write(chunk).length;
+    // 原始字节按上限缓冲，留给 end() 做编码识别与最终文本。
+    const cap = this.maxChars * MAX_UTF8_CHAR_BYTES;
+    const remaining = cap - this.bufferedBytes;
+    if (remaining <= 0) return;
+    const kept = chunk.length <= remaining ? chunk : chunk.subarray(0, remaining);
+    this.chunks.push(kept);
+    this.bufferedBytes += kept.length;
   }
 
-  /** 结束输入，刷新解码器缓冲的残留字符。 */
+  /** 结束输入，确定编码并解码出最终文本。 */
   end(): void {
-    this.capture(this.decoder.end());
+    this.totalChars += this.counter.end().length;
+    const text = sanitizeSurrogates(decodeOutput(Buffer.concat(this.chunks)));
+    this.chunks.length = 0;
+    this.retained = truncateChars(text, this.maxChars);
   }
 
   /** 返回当前保留在内存中的输出文本（最多 maxChars 个字符）。 */
@@ -33,15 +75,6 @@ export class BoundedOutputCollector {
   /** 返回累计接收到的总字符数（含被截断丢弃的部分）。 */
   get total(): number {
     return this.totalChars;
-  }
-
-  /** 累加总字符数，并只保留不超过 maxChars 的前缀部分，其余直接丢弃。 */
-  private capture(text: string): void {
-    const clean = sanitizeSurrogates(text);
-    this.totalChars += clean.length;
-    if (this.retained.length < this.maxChars) {
-      this.retained += clean.slice(0, this.maxChars - this.retained.length);
-    }
   }
 }
 
