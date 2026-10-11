@@ -44,6 +44,7 @@
 | B16 | 会话 | 会话导出 HTML/JSONL + 分享 | P2 | 大 | B3 |
 | B17 | 模型 | 模型解析带诊断 + 远程 catalog 刷新 | P2 | 大 | B1 |
 | B18 | 文档 | 复杂模块同目录设计说明（.md 旁置） | P2 | 小 | 无 |
+| B19 | 上下文 | usage 锚点的 token 记账（压缩触发） | P1 | 中 | ChatMessage 挂 usage |
 
 ## 四、详细条目
 
@@ -113,6 +114,13 @@
 - **建议**：优先补「自定义 slash command 注册表」和「`defineTool` + 包装既有工具」；markdown 转换/UI widget 视 web 前端需要再定。依赖 B4/B6 的事件与 hook 强类型。
 - **验收**：第三方可注册 slash command 与自定义工具，并接入 hook 生命周期。
 - **收益**：把 blh 从「内置扩展」升级为「可编程扩展」。
+
+#### B19 usage 锚点的 token 记账（压缩触发）
+- **pi 来源**：`packages/ai/src/utils/estimate.ts` 的 `estimateContextTokens`——用最近一条 assistant 的 `usage` 作锚点，只估算其后新增消息的 token；无 usage 时退化为纯 `chars/3.5` 估算。
+- **blh 现状**：`ContextCompactor.estimateChars` = `JSON.stringify(messages).length`，阈值是字符数（`CONTEXT_CHAR_LIMIT=50000` 等）；已移植 `src/contracts/estimate.ts`（`estimateTextTokens/estimateMessageTokens/estimateContextTokens`）但未接线。
+- **建议**：① `ChatMessage`/`Transcript` 增加 `usage` 字段，provider 每次响应把用量写回对应 assistant 消息；② 压缩触发改为「usage 锚点 + 尾部估算」与模型上下文窗口（留 reserve）比较；③ 退役 `estimateChars` 与 `*_CHAR_LIMIT` 字符阈值，换 token 语义阈值；无 usage 时用纯估算兜底。
+- **验收**：压缩时机基于真实 token 而非字符；历史越长、估算越贴近真实用量。
+- **收益**：压缩触发从「字符猜测」升级为「真实用量 + 短尾巴估算」，长会话下更稳。
 
 ### P2 —— 低优先（锦上添花 / 按需）
 
@@ -211,3 +219,4 @@
 - [ ] B16 会话导出 HTML/JSONL + 分享
 - [ ] B17 模型解析诊断 + 远程 catalog
 - [ ] B18 复杂模块同目录设计说明
+- [ ] B19 usage 锚点的 token 记账（压缩触发）

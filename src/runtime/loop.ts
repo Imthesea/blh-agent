@@ -71,6 +71,7 @@ export interface AgentLoopResult {
 /** 提示词过长时，允许「被动压缩后重试」的最大次数。 */
 const MAX_REACTIVE_RETRIES = 1;
 
+/** 若有 system 消息，则把它拼到消息列表最前面；无则原样返回。用于构造模型输入。 */
 function withSystem(
   messages: readonly ChatMessage[],
   system: ChatMessage | null,
@@ -79,6 +80,7 @@ function withSystem(
   return [system, ...messages];
 }
 
+/** 从后往前找最后一条 assistant 消息，找不到返回 null。用于确定本轮最终回复。 */
 function lastAssistantMessage(messages: readonly ChatMessage[]): ChatMessage | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i];
@@ -87,6 +89,7 @@ function lastAssistantMessage(messages: readonly ChatMessage[]): ChatMessage | n
   return null;
 }
 
+/** 按压缩计划压缩对话：保留 firstKeptIndex 之后的消息，之前的用摘要消息替代。 */
 function compactTranscript(transcript: Transcript, plan: CompactionPlan): void {
   const firstKeptSeq =
     plan.firstKeptIndex === null
@@ -112,6 +115,7 @@ export async function runAgentLoop(
   harness.tracer?.beginTurn(activeRequest);
   try {
     for (;;) {
+      // 第 1 步：检查中断信号与最大轮数上限。
       if (signal?.aborted) {
         return cancelTurnAborted(harness, transcript, events, iterations);
       }
@@ -126,8 +130,8 @@ export async function runAgentLoop(
       }
 
       log.debug("turn start", { messages: transcript.messageCount });
-      const compactor = harness.compactor;
 
+      // 第 2 步：把已完成的后台任务结果注入对话。
       if (harness.jobs) {
         const injected = harness.jobs.injectBackgroundResults(transcript);
         if (injected > 0) {
@@ -140,6 +144,8 @@ export async function runAgentLoop(
         }
       }
 
+      // 第 3 步：准备模型输入（有压缩器时先尝试压缩）。
+      const compactor = harness.compactor;
       if (compactor) {
         const prepared = await compactor.prepare(transcript.conversation, activeRequest);
         if (prepared.compaction) {
@@ -152,6 +158,7 @@ export async function runAgentLoop(
         modelMessages = transcript.messages;
       }
 
+      // 第 4 步：调用模型生成回复（优先流式，失败回退非流式）。
       const tools = harness.tools.list();
       let message: ChatMessage;
       const streamAvailable = events !== undefined && harness.provider.stream !== undefined;
@@ -264,6 +271,7 @@ export async function runAgentLoop(
       modelMessages = transcript.messages;
       const toolCalls: ToolCall[] = message.tool_calls ?? [];
 
+      // 第 5 步：没有工具调用时，做目标检查，达标则结束本轮。
       if (toolCalls.length === 0) {
         const decision = await evaluateGoalStop(harness, modelMessages);
         if (decision !== null && decision.action !== "allow") {
@@ -281,6 +289,7 @@ export async function runAgentLoop(
         return { status: "completed", iterations, finalAssistant: message };
       }
 
+      // 第 6 步：逐个执行工具调用，并把结果写回对话。
       let compactRequested = false;
       let usedTodo = false;
       for (const call of toolCalls) {
@@ -368,6 +377,7 @@ export async function runAgentLoop(
         });
       }
 
+      // 第 7 步：工具执行后的收尾——中断检查、todo 提醒、主动压缩。
       if (signal?.aborted) {
         return cancelTurnAborted(harness, transcript, events, iterations);
       }
@@ -471,6 +481,7 @@ async function streamAssistantMessage(
   );
 }
 
+/** 非流式请求一条 assistant 消息；provider 支持返回用量时用 chatWithUsage，否则退回 chat 并补 usage: null。 */
 async function requestAssistantMessage(
   provider: ChatProvider,
   messages: readonly ChatMessage[],
