@@ -189,7 +189,7 @@ describe("buildHarness 装配", () => {
 
 describe("parseCliArgs", () => {
   it("parses model and base-url flags", async () => {
-    const { parseCliArgs } = await import("../../src/cli/main.js");
+    const { parseCliArgs } = await import("../../src/cli/args.js");
     const parsed = parseCliArgs([
       "--model", "deepseek-chat",
       "--base-url", "https://example.com/v1",
@@ -201,14 +201,14 @@ describe("parseCliArgs", () => {
   });
 
   it("parses --provider flag", async () => {
-    const { parseCliArgs } = await import("../../src/cli/main.js");
+    const { parseCliArgs } = await import("../../src/cli/args.js");
     const parsed = parseCliArgs(["--provider", "anthropic", "--model", "claude-x"]);
     expect(parsed.cli.provider).toBe("anthropic");
     expect(parsed.cli.model).toBe("claude-x");
   });
 
   it("parses workdir/timeout/max-output flags", async () => {
-    const { parseCliArgs } = await import("../../src/cli/main.js");
+    const { parseCliArgs } = await import("../../src/cli/args.js");
     const parsed = parseCliArgs([
       "--workdir", "C:\\tmp\\work",
       "--bash-timeout", "60",
@@ -221,47 +221,47 @@ describe("parseCliArgs", () => {
   });
 
   it("parses -p prompt", async () => {
-    const { parseCliArgs } = await import("../../src/cli/main.js");
+    const { parseCliArgs } = await import("../../src/cli/args.js");
     const parsed = parseCliArgs(["-p", "你好，世界"]);
     expect(parsed.prompt).toBe("你好，世界");
     expect(parsed.cli).toEqual({});
   });
 
   it("parses --dangerously-skip-permissions flag", async () => {
-    const { parseCliArgs } = await import("../../src/cli/main.js");
+    const { parseCliArgs } = await import("../../src/cli/args.js");
     expect(parseCliArgs([]).skipPermissions).toBeUndefined();
     expect(parseCliArgs(["--dangerously-skip-permissions"]).skipPermissions).toBe(true);
   });
 
   it("parses --continue with no value (restore latest)", async () => {
-    const { parseCliArgs } = await import("../../src/cli/main.js");
+    const { parseCliArgs } = await import("../../src/cli/args.js");
     const parsed = parseCliArgs(["--continue"]);
     expect(parsed.continue).toBe(true);
     expect(parsed.continueFile).toBeUndefined();
   });
 
   it("parses --continue <file>", async () => {
-    const { parseCliArgs } = await import("../../src/cli/main.js");
+    const { parseCliArgs } = await import("../../src/cli/args.js");
     const parsed = parseCliArgs(["--continue", "session_123.jsonl"]);
     expect(parsed.continue).toBe(true);
     expect(parsed.continueFile).toBe("session_123.jsonl");
   });
   it("rejects --continue values that contain path separators", async () => {
-    const { parseCliArgs } = await import("../../src/cli/main.js");
+    const { parseCliArgs } = await import("../../src/cli/args.js");
     expect(() => parseCliArgs(["--continue", "../session.jsonl"])).toThrow("invalid session file");
     expect(() => parseCliArgs(["--continue", "..\\session.jsonl"])).toThrow("invalid session file");
     expect(() => parseCliArgs(["--continue", ".."])).toThrow("invalid session file");
   });
 
   it("no --continue leaves continue flags unset", async () => {
-    const { parseCliArgs } = await import("../../src/cli/main.js");
+    const { parseCliArgs } = await import("../../src/cli/args.js");
     const parsed = parseCliArgs(["-p", "hi"]);
     expect(parsed.continue).toBeUndefined();
     expect(parsed.continueFile).toBeUndefined();
   });
 
   it("解析 web 子命令与 --port/--dev", async () => {
-    const { parseCliArgs } = await import("../../src/cli/main.js");
+    const { parseCliArgs } = await import("../../src/cli/args.js");
     const parsed = parseCliArgs(["web", "--port", "9000", "--dev"]);
     expect(parsed.web).toBe(true);
     expect(parsed.port).toBe(9000);
@@ -269,7 +269,7 @@ describe("parseCliArgs", () => {
   });
 
   it("无 web 子命令时不带 web/port/dev 标记", async () => {
-    const { parseCliArgs } = await import("../../src/cli/main.js");
+    const { parseCliArgs } = await import("../../src/cli/args.js");
     const parsed = parseCliArgs(["-p", "hi"]);
     expect(parsed.web).toBeUndefined();
     expect(parsed.port).toBeUndefined();

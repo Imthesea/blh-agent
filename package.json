@@ -20,7 +20,7 @@
   },
   "type": "module",
   "bin": {
-    "blh": "dist/cli/main.js"
+    "blh": "dist/cli/cli.js"
   },
   "engines": {
     "node": ">=20"
@@ -32,11 +32,11 @@
     "test": "vitest run",
     "lint": "eslint . && node scripts/check-architecture.mjs",
     "eval:live": "tsx evals/live-cli.ts",
-    "dev": "tsx src/cli/main.ts",
-    "dev:yes": "tsx src/cli/main.ts --dangerously-skip-permissions",
-    "web:server": "tsx src/cli/main.ts web --dev",
+    "dev": "tsx src/cli/cli.ts",
+    "dev:yes": "tsx src/cli/cli.ts --dangerously-skip-permissions",
+    "web:server": "tsx src/cli/cli.ts web --dev",
     "web:client": "pnpm --filter @blh/web dev",
-    "web:prod": "pnpm build && pnpm build:web && tsx src/cli/main.ts web"
+    "web:prod": "pnpm build && pnpm build:web && tsx src/cli/cli.ts web"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.128.0",

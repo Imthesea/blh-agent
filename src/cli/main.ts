@@ -1,9 +1,6 @@
-#!/usr/bin/env node
 import { exec } from "node:child_process";
 import readline from "node:readline";
 import * as path from "node:path";
-import { pathToFileURL } from "node:url";
-import { parseArgs } from "node:util";
 import { repl, makeReadlineIO } from "./repl.js";
 import { SessionStore } from "../session/store.js";
 import type { Transcript } from "../session/transcript.js";
@@ -11,104 +8,9 @@ import { createLogger } from "@blh/logger";
 import type { ApprovalAsker, ApprovalDecision } from "../security/approval.js";
 import { startWebServerFromCli } from "./web.js";
 import { buildHarness } from "./buildHarness.js";
+import { parseCliArgs, USAGE, type ParsedCliArgs } from "./args.js";
 
 export const log = createLogger("cli");
-
-export interface ParsedCliArgs {
-  prompt?: string;
-  workdir?: string;
-  help?: boolean;
-  skipPermissions?: boolean;
-  continue?: boolean;
-  continueFile?: string;
-  web?: boolean;
-  port?: number;
-  dev?: boolean;
-  cli: Record<string, string>;
-}
-
-/** 从命令行参数里取一个字符串值；取不到就返回 undefined。 */
-function stringValue(
-  values: Record<string, string | boolean | undefined>,
-  key: string,
-): string | undefined {
-  const value = values[key];
-  return typeof value === "string" ? value : undefined;
-}
-
-/** 手动扫描 --continue 参数（它是可选值，标准解析不好处理），返回是否继续以及继续哪个会话文件。 */
-function parseContinue(argv: string[]): { continue?: boolean; continueFile?: string } {
-  for (let i = 0; i < argv.length; i++) {
-    if (argv[i] !== "--continue") continue;
-    const next = argv[i + 1];
-    if (next !== undefined && !next.startsWith("-")) {
-      if (!isSessionFileName(next)) throw new Error(`invalid session file: ${next}`);
-      return { continue: true, continueFile: next };
-    }
-    return { continue: true };
-  }
-  return {};
-}
-
-function isSessionFileName(file: string): boolean {
-  return file !== "" && file !== "." && file !== ".." && !/[\\/]/.test(file);
-}
-
-/** 解析命令行参数，拼成结构化结果：一次性 prompt、工作目录、模型等配置，以及是否跳过权限。 */
-export function parseCliArgs(argv: string[]): ParsedCliArgs {
-  const { values, positionals } = parseArgs({
-    args: argv,
-    options: {
-      print: { type: "string", short: "p" },
-      model: { type: "string" },
-      "base-url": { type: "string" },
-      provider: { type: "string" },
-      workdir: { type: "string" },
-      "bash-timeout": { type: "string" },
-      "max-output-chars": { type: "string" },
-      "dangerously-skip-permissions": { type: "boolean" },
-      port: { type: "string" },
-      dev: { type: "boolean" },
-    },
-    strict: false,
-  });
-
-  const model = stringValue(values, "model");
-  const baseUrl = stringValue(values, "base-url");
-  const provider = stringValue(values, "provider");
-  const bashTimeout = stringValue(values, "bash-timeout");
-  const maxOutputChars = stringValue(values, "max-output-chars");
-  const workdirValue = stringValue(values, "workdir");
-  const prompt = stringValue(values, "print");
-  const help = values.help === true;
-  const skipPermissions = values["dangerously-skip-permissions"] === true;
-
-  const web = positionals[0] === "web";
-  const portValue = stringValue(values, "port");
-  const port =
-    portValue !== undefined && /^\d+$/.test(portValue) ? Number.parseInt(portValue, 10) : undefined;
-  const dev = values.dev === true;
-
-  const cli: Record<string, string> = {};
-  if (model !== undefined) cli.model = model;
-  if (baseUrl !== undefined) cli.base_url = baseUrl;
-  if (provider !== undefined) cli.provider = provider;
-  if (bashTimeout !== undefined) cli.bash_timeout = bashTimeout;
-  if (maxOutputChars !== undefined) cli.max_output_chars = maxOutputChars;
-  if (workdirValue !== undefined) cli.workdir = workdirValue;
-
-  return {
-    ...(help ? { help } : {}),
-    ...(prompt !== undefined ? { prompt } : {}),
-    ...(workdirValue !== undefined ? { workdir: workdirValue } : {}),
-    ...(skipPermissions ? { skipPermissions } : {}),
-    ...parseContinue(argv),
-    ...(web ? { web: true } : {}),
-    ...(port !== undefined ? { port } : {}),
-    ...(dev ? { dev: true } : {}),
-    cli,
-  };
-}
 
 /** 造一个"问用户是否同意"的函数：弹出问题，等用户在终端里输入答案。 */
 function makeAskUser(rl: readline.Interface): ApprovalAsker {
@@ -136,34 +38,31 @@ function openBrowser(url: string): void {
   exec(command, () => {});
 }
 
-const USAGE = `用法: blh [-h] [-p 提示词] [--provider 厂商] [--model 模型] [--base-url 基础地址]
-            [--workdir 工作目录] [--bash-timeout 超时秒数]
-            [--max-output-chars 最大输出字符数]
-            [--dangerously-skip-permissions]
-
-编程智能体命令行工具 (TypeScript)
-
-选项:
-  --provider 厂商         provider id（deepseek/anthropic/qwen/kimi；默认 deepseek）
-  -p, --print 提示词      跑一次单个提示词并打印回复
-  --model 模型            模型名（覆盖 OPENAI_MODEL）
-  --base-url 基础地址     OpenAI 兼容的基础地址（覆盖 OPENAI_BASE_URL）
-  --workdir 工作目录       运行工作目录（不改变配置发现目录）
-  --bash-timeout N        bash 超时秒数
-  --max-output-chars N    最大捕获输出字符数
-  --dangerously-skip-permissions
-                          允许所有 bash 命令，除了硬性禁止规则
-  --continue [文件]       继续之前的会话（最近一次，或 .sessions/ 里的文件）
-  blh web [--port N] [--dev] [--workdir 目录]
-                          启动 web 交互式工作台（端口优先级：--port、BLH_WEB_PORT、8123）
-  -h, --help              显示帮助信息并退出`;
-
 /** 程序入口：解析参数，然后按三种模式之一执行——web 工作台、一次性 prompt、交互式 REPL。 */
-async function main(): Promise<void> {
-  // 解析命令行参数。process.argv 前两项是 node 路径和脚本路径，slice(2) 只取真正的用户参数。
-  // 解构出各配置；其中 continue 是 JS 保留字不能直接当变量名，所以重命名成 doContinue。
-  const { prompt, workdir, cli, help, skipPermissions, continue: doContinue, continueFile, web, port, dev } =
-    parseCliArgs(process.argv.slice(2));
+export async function main(args: string[]): Promise<void> {
+  // 解析命令行参数。其中 continue 是 JS 保留字不能直接当变量名，所以重命名成 doContinue。
+  let parsed: ParsedCliArgs;
+  try {
+    parsed = parseCliArgs(args);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`参数错误: ${message}`);
+    console.error("用法: blh --help");
+    process.exitCode = 1;
+    return;
+  }
+  const {
+    prompt,
+    workdir,
+    cli,
+    help,
+    skipPermissions,
+    continue: doContinue,
+    continueFile,
+    web,
+    port,
+    dev,
+  } = parsed;
 
   // —— 帮助模式：用户要 -h/--help，打印用法说明后直接退出。
   if (help) {
@@ -210,7 +109,8 @@ async function main(): Promise<void> {
     // 空提示词没有意义，报错退出。
     if (!prompt) {
       log.error("用法: blh -p <文本>");
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
     // 组装 harness；第三个参数 askUser 传 undefined，因为一次性模式不需要交互审批弹窗。
     const harness = buildHarness(workdir, cli, undefined, skipPermissions);
@@ -241,39 +141,26 @@ async function main(): Promise<void> {
 
   try {
     let transcript: Transcript;
-  if (doContinue) {
-    // 继续旧会话：--continue 给了文件名就用它，否则找最近一次存档的会话。
-    const file = continueFile
-      ? path.join(harness.config.workdir, ".sessions", continueFile)
-      : SessionStore.latest(harness.config.workdir);
-    // 没找到可继续的会话，报错退出。
-    if (!file) throw new Error("没有找到可继续的会话");
-    // 打开这个存档文件，后续新消息会往里追加。
-    harness.sessionStore = SessionStore.open(file);
-    // 从事件日志重放会话；system 由 Harness 重建，不重复落盘。
-    transcript = harness.newTranscript(SessionStore.loadSession(file).events);
-  } else {
-    // 全新会话：在 .sessions/ 下新建存档文件，再建一个只含 system 消息的会话。
-    harness.sessionStore = SessionStore.create(harness.config.workdir);
-    transcript = harness.newTranscript();
-  }
-  // 进入交互循环：不断读用户输入、跑 agent、打印结果，直到用户退出。
-  await repl(harness, makeReadlineIO(rl), transcript);
+    if (doContinue) {
+      // 继续旧会话：--continue 给了文件名就用它，否则找最近一次存档的会话。
+      const file = continueFile
+        ? path.join(harness.config.workdir, ".sessions", continueFile)
+        : SessionStore.latest(harness.config.workdir);
+      // 没找到可继续的会话，报错退出。
+      if (!file) throw new Error("没有找到可继续的会话");
+      // 打开这个存档文件，后续新消息会往里追加。
+      harness.sessionStore = SessionStore.open(file);
+      // 从事件日志重放会话；system 由 Harness 重建，不重复落盘。
+      transcript = harness.newTranscript(SessionStore.loadSession(file).events);
+    } else {
+      // 全新会话：在 .sessions/ 下新建存档文件，再建一个只含 system 消息的会话。
+      harness.sessionStore = SessionStore.create(harness.config.workdir);
+      transcript = harness.newTranscript();
+    }
+    // 进入交互循环：不断读用户输入、跑 agent、打印结果，直到用户退出。
+    await repl(harness, makeReadlineIO(rl), transcript);
   } finally {
     rl.close();
     await harness.dispose();
   }
-}
-
-/** 判断这个文件是不是被直接运行（比如 node main.js），而不是被别的文件 import。
- *  只有直接运行时才调用 main()，避免被测试或其它模块 import 时也自动启动程序。 */
-const isDirectRun =
-  process.argv[1] !== undefined &&
-  import.meta.url === pathToFileURL(process.argv[1]).href;
-
-if (isDirectRun) {
-  main().catch((error: unknown) => {
-    log.error("致命错误", {}, error);
-    process.exit(1);
-  });
 }
