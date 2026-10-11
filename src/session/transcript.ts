@@ -188,6 +188,16 @@ export class Transcript {
     return Object.freeze(messages);
   }
 
+  /** 纯对话（不含 system），供压缩器等只关心历史的调用方使用。 */
+  get conversation(): readonly ChatMessage[] {
+    return Object.freeze(this.projected.map((item) => item.message));
+  }
+
+  /** 消息总数（含 system），O(1)；供计数/日志使用，避免为拿长度而物化 messages 数组。 */
+  get messageCount(): number {
+    return this.projected.length + (this.system !== null ? 1 : 0);
+  }
+
   /** 当前最大事件 seq（作为回滚边界）。 */
   get lastSeq(): number {
     return this.nextSeq - 1;
@@ -291,15 +301,12 @@ export class Transcript {
     );
   }
 
-  /** 返回模型视图下标对应的消息事件 seq；system / 摘要消息返回 null。 */
+  /** 返回对话视图（不含 system）下标对应的消息事件 seq；摘要消息返回 null。 */
   messageSeqAt(index: number): number | null {
-    const messages = this.messages;
-    if (!Number.isInteger(index) || index < 0 || index >= messages.length) {
+    if (!Number.isInteger(index) || index < 0 || index >= this.projected.length) {
       throw new Error(`Message index out of range: ${index}`);
     }
-    if (this.system !== null && index === 0) return null;
-    const projectedIndex = this.system === null ? index : index - 1;
-    return this.projected[projectedIndex]?.sourceSeq ?? null;
+    return this.projected[index]?.sourceSeq ?? null;
   }
 
   /** 返回某 seq 之后最后一条 assistant 文本；没有则返回空串。 */

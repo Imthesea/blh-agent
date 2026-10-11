@@ -36,28 +36,37 @@ class StreamFailedError extends Error {
   }
 }
 
+/** 一次工具调用的请求：模型返回的原始调用信息，加上解析后的参数。 */
 export interface AgentLoopToolRequest {
+  /** 模型返回的原始工具调用（含调用 id、函数名、参数 JSON 串）。 */
   call: ToolCall;
+  /** 解析后的工具参数（调用 id、函数名、参数 JSON 串去解析后得到）。 */
   input: Record<string, unknown>;
 }
 
+/** 工具分发器：注入后可自定义「如何执行某个工具」，返回执行结果文本。 */
 export type AgentLoopToolDispatcher = (
   request: AgentLoopToolRequest,
   signal?: AbortSignal,
 ) => Promise<string>;
 
+/** agent 主循环的运行时配置，可覆盖默认行为。 */
 export interface AgentLoopProfile {
+  /** 最大迭代轮数；达到后本轮以 max_turns 状态结束。 */
   maxTurns?: number;
+  /** 自定义工具分发器；不传则走默认的工具注册表分发。 */
   dispatchTool?: AgentLoopToolDispatcher;
 }
 
+/** agent 主循环跑完一轮后的结果。 */
 export interface AgentLoopResult {
+  /** 结束状态：正常完成 / 被用户中断 / 达到最大轮数。 */
   status: "completed" | "cancelled" | "max_turns";
+  /** 实际执行的迭代次数。 */
   iterations: number;
+  /** 最后一条 assistant 消息；可能为 null。 */
   finalAssistant: ChatMessage | null;
 }
-
-export { parseToolArguments };
 
 /** 提示词过长时，允许「被动压缩后重试」的最大次数。 */
 const MAX_REACTIVE_RETRIES = 1;
@@ -104,14 +113,7 @@ export async function runAgentLoop(
   try {
     for (;;) {
       if (signal?.aborted) {
-        cancelLatestAssistant(transcript);
-        harness.tracer?.cancelTurn("aborted");
-        if (events !== undefined) await events.emit({ type: "turn_cancelled", text: "" });
-        return {
-          status: "cancelled",
-          iterations,
-          finalAssistant: lastAssistantMessage(transcript.messages),
-        };
+        return cancelTurnAborted(harness, transcript, events, iterations);
       }
       if (profile.maxTurns !== undefined && iterations >= profile.maxTurns) {
         harness.tracer?.endTurn("max_turns");
@@ -123,7 +125,7 @@ export async function runAgentLoop(
         };
       }
 
-      log.debug("turn start", { messages: transcript.messages.length });
+      log.debug("turn start", { messages: transcript.messageCount });
       const compactor = harness.compactor;
 
       if (harness.jobs) {
@@ -139,7 +141,7 @@ export async function runAgentLoop(
       }
 
       if (compactor) {
-        const prepared = await compactor.prepare(transcript.messages, activeRequest);
+        const prepared = await compactor.prepare(transcript.conversation, activeRequest);
         if (prepared.compaction) {
           compactTranscript(transcript, prepared.compaction);
           modelMessages = transcript.messages;
@@ -150,6 +152,7 @@ export async function runAgentLoop(
         modelMessages = transcript.messages;
       }
 
+      const tools = harness.tools.list();
       let message: ChatMessage;
       const streamAvailable = events !== undefined && harness.provider.stream !== undefined;
       let usage: ChatUsage | null = null;
@@ -161,7 +164,7 @@ export async function runAgentLoop(
             const streamed = await streamAssistantMessage(
               harness.provider,
               modelMessages,
-              harness.tools.list(),
+              tools,
               events,
               signal,
             );
@@ -186,7 +189,7 @@ export async function runAgentLoop(
             const response = await requestAssistantMessage(
               harness.provider,
               modelMessages,
-              harness.tools.list(),
+              tools,
               signal,
             );
             message = response.message;
@@ -197,7 +200,7 @@ export async function runAgentLoop(
           const response = await requestAssistantMessage(
             harness.provider,
             modelMessages,
-            harness.tools.list(),
+            tools,
             signal,
           );
           message = response.message;
@@ -244,7 +247,7 @@ export async function runAgentLoop(
         }
 
         if (compactor && isPromptTooLong(error) && reactiveRetries < MAX_REACTIVE_RETRIES) {
-          const compacted = await compactor.reactiveCompact(transcript.messages, activeRequest);
+          const compacted = await compactor.reactiveCompact(transcript.conversation, activeRequest);
           if (compacted.compaction) {
             compactTranscript(transcript, compacted.compaction);
             modelMessages = transcript.messages;
@@ -262,7 +265,7 @@ export async function runAgentLoop(
       const toolCalls: ToolCall[] = message.tool_calls ?? [];
 
       if (toolCalls.length === 0) {
-        const decision = await evaluateGoalStop(harness, transcript.messages);
+        const decision = await evaluateGoalStop(harness, modelMessages);
         if (decision !== null && decision.action !== "allow") {
           harness.tracer?.event("goal", {
             action: decision.action,
@@ -330,8 +333,12 @@ export async function runAgentLoop(
             result = await harness.tools.dispatch(name, input, signal);
             await harness.hooks.trigger(POST_TOOL_USE, { name, input, output: result });
           }
-          if (name === "todo_write") usedTodo = true;
         }
+
+        if (name === "todo_write") usedTodo = true;
+
+        const isError = result.startsWith("error:");
+        const isDenied = result.startsWith("denied");
 
         if (events !== undefined) {
           await events.emit({
@@ -339,16 +346,16 @@ export async function runAgentLoop(
             id: call.id,
             name,
             output: result,
-            isError: result.startsWith("error:") || result.startsWith("denied"),
+            isError: isError || isDenied,
           });
         }
         harness.tracer?.event("tool", {
           tool: name,
           args_summary: summarize(JSON.stringify(input)),
           latency_ms: Date.now() - toolStart,
-          status: result.startsWith("error:")
+          status: isError
             ? "error"
-            : result.startsWith("denied")
+            : isDenied
               ? "denied"
               : "ok",
           output_summary: summarize(result),
@@ -362,16 +369,7 @@ export async function runAgentLoop(
       }
 
       if (signal?.aborted) {
-        cancelLatestAssistant(transcript);
-        harness.tracer?.cancelTurn("aborted");
-        if (events !== undefined) {
-          await events.emit({ type: "turn_cancelled", text: "" });
-        }
-        return {
-          status: "cancelled",
-          iterations,
-          finalAssistant: lastAssistantMessage(transcript.messages),
-        };
+        return cancelTurnAborted(harness, transcript, events, iterations);
       }
 
       const todoManager = harness.todoManager;
@@ -381,7 +379,7 @@ export async function runAgentLoop(
       }
 
       if (compactRequested && compactor) {
-        const compacted = await compactor.compactHistory(transcript.messages, activeRequest);
+        const compacted = await compactor.compactHistory(transcript.conversation, activeRequest);
         if (compacted.compaction) {
           compactTranscript(transcript, compacted.compaction);
           modelMessages = transcript.messages;
@@ -408,6 +406,22 @@ export async function agentLoop(
 function cancelLatestAssistant(transcript: Transcript): void {
   const seq = transcript.lastAssistantSeqAfter(0);
   if (seq !== null) transcript.cancelMessage(seq);
+}
+
+async function cancelTurnAborted(
+  harness: AgentLoopRuntime,
+  transcript: Transcript,
+  events: EventBus | undefined,
+  iterations: number,
+): Promise<AgentLoopResult> {
+  cancelLatestAssistant(transcript);
+  harness.tracer?.cancelTurn("aborted");
+  if (events !== undefined) await events.emit({ type: "turn_cancelled", text: "" });
+  return {
+    status: "cancelled",
+    iterations,
+    finalAssistant: lastAssistantMessage(transcript.messages),
+  };
 }
 
 async function evaluateGoalStop(

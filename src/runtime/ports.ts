@@ -29,12 +29,12 @@ export interface ToolRegistryPort {
 export interface CompactionPlan {
   /** 摘要消息本身。 */
   summaryMessage: ChatMessage;
-  /** 输入 messages 数组（含 system）中第一条保留消息的下标；null 表示全量摘要。 */
+  /** 输入 messages 数组（不含 system，纯对话）中第一条保留消息的下标；null 表示全量摘要。 */
   firstKeptIndex: number | null;
 }
 
 export interface PreparedContext {
-  /** 本轮传给 provider 的上下文；可能包含不落盘的本地变换。 */
+  /** 纯对话（不含 system）；调用方需自行拼上 system 再发给 provider。 */
   messages: ChatMessage[];
   /** 只有语义压缩才设置；本地变换不设置。 */
   compaction?: CompactionPlan;
