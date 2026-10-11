@@ -52,8 +52,8 @@ describe("Transcript", () => {
       user("kept"),
       user("tail"),
     ]);
-    expect(transcript.messageSeqAt(1)).toBeNull();
-    expect(transcript.messageSeqAt(2)).toBe(keptSeq);
+    expect(transcript.messageSeqAt(0)).toBeNull();
+    expect(transcript.messageSeqAt(1)).toBe(keptSeq);
   });
 
   it("compact null 边界只保留摘要", () => {
