@@ -30,6 +30,8 @@ export interface ChatMessage {
   name?: string;
   /** 该条 assistant 消息是否因用户中断而提前结束 */
   cancelled?: boolean;
+  /** 压缩摘要消息：前端应隐藏，不作为普通用户轮次渲染 */
+  isCompactionSummary?: boolean;
 }
 
 export type ToolHandler = (args: Record<string, unknown>, signal?: AbortSignal) => Promise<string>;

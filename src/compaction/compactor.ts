@@ -398,6 +398,7 @@ export class ContextCompactor {
   static summaryMessage(label: string, request: string, summary: string): ChatMessage {
     return {
       role: "user",
+      isCompactionSummary: true,
       content:
         `[${label}]\n\n当前用户请求：\n${request}\n\n` +
         `对话摘要（仅供参考）：\n${JSON.stringify(summary)}`,

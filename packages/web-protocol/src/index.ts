@@ -11,6 +11,8 @@ export interface ChatMessage {
   tool_call_id?: string;
   name?: string;
   cancelled?: boolean;
+  /** 压缩摘要消息：前端应隐藏，不作为普通用户轮次渲染 */
+  isCompactionSummary?: boolean;
 }
 
 export type AgentEvent =

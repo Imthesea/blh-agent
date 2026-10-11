@@ -13,9 +13,10 @@ export interface ThinkingStep {
   isError?: boolean;
 }
 
-/** 一次用户提问的完整展示块：用户气泡 + 思考过程 + 最终回复。 */
+/** 一次用户提问的完整展示块：用户气泡（可能为 null）+ 思考过程 + 最终回复。 */
 export interface TurnBlock {
-  user: UiMessage;
+  /** 该轮用户消息；压缩摘要被隐藏后紧跟的续段没有用户消息，为 null。 */
+  user: UiMessage | null;
   /** 该轮最后一条有文本的 assistant 消息；无则 null。 */
   final: UiMessage | null;
   thinking: ThinkingStep[];
@@ -24,15 +25,20 @@ export interface TurnBlock {
 /**
  * 把扁平消息按「用户提问」分段，并把每段里的中间文本 + 工具调用折叠为思考过程，
  * 只保留最后一条有文本的 assistant 作为最终回复。
+ * 压缩摘要消息（isCompactionSummary）不展示，也不作为用户轮次。
  */
 export function groupMessages(messages: UiMessage[]): TurnBlock[] {
   const segments: UiMessage[][] = [];
   for (const m of messages) {
     if (m.role === "system") continue;
     if (m.role === "user") {
+      if (m.isCompactionSummary === true) continue; // 隐藏压缩摘要
       segments.push([m]);
     } else if (segments.length > 0) {
       segments[segments.length - 1]!.push(m);
+    } else {
+      // 会话开头就被压缩、没有用户消息可归属时，挂到一个无用户气泡的续段，避免丢弃。
+      segments.push([m]);
     }
   }
 
@@ -40,12 +46,14 @@ export function groupMessages(messages: UiMessage[]): TurnBlock[] {
   const nextId = () => `step-${++seq}`;
 
   return segments.map((seg) => {
-    const user = seg[0]!;
+    const hasUser = seg[0]!.role === "user";
+    const user = hasUser ? seg[0]! : null;
+    const body = hasUser ? seg.slice(1) : seg;
 
     // 找最后一条有文本的 assistant（作为最终回复）
     let finalIdx = -1;
-    for (let i = 1; i < seg.length; i++) {
-      const m = seg[i]!;
+    for (let i = 0; i < body.length; i++) {
+      const m = body[i]!;
       if (m.role === "assistant" && ((m.content ?? "").trim() !== "" || m.cancelled === true)) {
         finalIdx = i;
       }
@@ -53,9 +61,9 @@ export function groupMessages(messages: UiMessage[]): TurnBlock[] {
 
     const thinking: ThinkingStep[] = [];
     const pendingTools = new Map<string, ThinkingStep>();
-    for (let i = 1; i < seg.length; i++) {
+    for (let i = 0; i < body.length; i++) {
       if (i === finalIdx) continue;
-      const m = seg[i]!;
+      const m = body[i]!;
       if (m.role === "assistant") {
         const text = (m.content ?? "").trim();
         if (text !== "") {
@@ -83,6 +91,6 @@ export function groupMessages(messages: UiMessage[]): TurnBlock[] {
       }
     }
 
-    return { user, final: finalIdx === -1 ? null : seg[finalIdx]!, thinking };
+    return { user, final: finalIdx === -1 ? null : body[finalIdx]!, thinking };
   });
 }

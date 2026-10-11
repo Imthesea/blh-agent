@@ -20,11 +20,15 @@ const log = createLogger("web.app");
 /** 连接中断时展示的提示文案。 */
 const RECONNECT_MESSAGE = "连接中断，正在自动重连…";
 
-/** 一次工具调用在前端展示所需的状态（参数 + 结果）。 */
-export interface ToolEvent {
+/** 直播过程中的一个有序步骤：一段文本，或一次工具调用。 */
+export interface LiveStep {
   id: string;
-  name: string;
-  arguments: string;
+  kind: "text" | "tool";
+  /** kind === "text" 时的内容 */
+  text?: string;
+  /** kind === "tool" 时的工具名 / 参数 / 结果 */
+  name?: string;
+  arguments?: string;
   output?: string;
   isError?: boolean;
 }
@@ -48,14 +52,19 @@ function nextId(): string {
   return `msg-${messageSeq}`;
 }
 
+let stepSeq = 0;
+function nextStepId(): string {
+  stepSeq += 1;
+  return `step-${stepSeq}`;
+}
+
 function toUiMessage(m: ChatMessage): UiMessage {
   return { ...m, id: nextId() };
 }
 
 export interface AgentState {
   messages: UiMessage[];
-  toolEvents: ToolEvent[];
-  streaming: string;
+  steps: LiveStep[];
   approval: ApprovalRequest | null;
   error: string | null;
   busy: boolean;
@@ -74,8 +83,7 @@ export interface AgentState {
 
 export function useAgentEvents(): AgentState {
   const [messages, setMessages] = useState<UiMessage[]>([]);
-  const [toolEvents, setToolEvents] = useState<ToolEvent[]>([]);
-  const [streaming, setStreaming] = useState("");
+  const [steps, setSteps] = useState<LiveStep[]>([]);
   const [approval, setApproval] = useState<ApprovalRequest | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -87,7 +95,6 @@ export function useAgentEvents(): AgentState {
 
   const refreshSeq = useRef(0);
   const disposed = useRef(false);
-  const streamBuf = useRef<string[]>([]);
   const reconnecting = useRef(false);
 
   useEffect(() => {
@@ -133,44 +140,48 @@ export function useAgentEvents(): AgentState {
           case "turn_start":
             setSubmitting(false);
             setBusy(true);
-            setStreaming("");
-            streamBuf.current = [];
-            setToolEvents([]);
+            setSteps([]);
             setError(null);
             break;
           case "assistant_text_delta":
-            streamBuf.current.push(event.text);
-            setStreaming(streamBuf.current.join(""));
+            setSteps((prev) => {
+              const last = prev[prev.length - 1];
+              if (last !== undefined && last.kind === "text") {
+                return [...prev.slice(0, -1), { ...last, text: (last.text ?? "") + event.text }];
+              }
+              return [...prev, { id: nextStepId(), kind: "text", text: event.text }];
+            });
             break;
           case "assistant_text_complete":
-            streamBuf.current = [event.text];
-            setStreaming(event.text);
+            setSteps((prev) => {
+              const last = prev[prev.length - 1];
+              if (last !== undefined && last.kind === "text") {
+                return [...prev.slice(0, -1), { ...last, text: event.text }];
+              }
+              return [...prev, { id: nextStepId(), kind: "text", text: event.text }];
+            });
             break;
           case "tool_call":
-            setToolEvents((ts) => [
-              ...ts,
-              { id: event.id, name: event.name, arguments: event.arguments },
+            setSteps((prev) => [
+              ...prev,
+              { id: `tool-${event.id}`, kind: "tool", name: event.name, arguments: event.arguments },
             ]);
             break;
           case "tool_result":
-            setToolEvents((ts) =>
-              ts.map((t) =>
-                t.id === event.id ? { ...t, output: event.output, isError: event.isError } : t,
+            setSteps((prev) =>
+              prev.map((s) =>
+                s.id === `tool-${event.id}` ? { ...s, output: event.output, isError: event.isError } : s,
               ),
             );
             break;
           case "turn_end":
             setBusy(false);
-            setStreaming("");
-            streamBuf.current = [];
-            setToolEvents([]);
+            setSteps([]);
             void refresh();
             break;
           case "turn_cancelled":
             setBusy(false);
-            setStreaming("");
-            streamBuf.current = [];
-            setToolEvents([]);
+            setSteps([]);
             void refresh();
             break;
           case "approval_requested":
@@ -186,9 +197,7 @@ export function useAgentEvents(): AgentState {
             log.warn("agent error", { message: event.message });
             setSubmitting(false);
             setBusy(false);
-            setStreaming("");
-            streamBuf.current = [];
-            setToolEvents([]);
+            setSteps([]);
             break;
         }
       },
@@ -197,8 +206,7 @@ export function useAgentEvents(): AgentState {
           reconnecting.current = true;
           setSubmitting(false);
           setBusy(false);
-          setStreaming("");
-          streamBuf.current = [];
+          setSteps([]);
           setError(RECONNECT_MESSAGE);
         } else {
           // 重连成功后重新拉取权威状态，补回断线期间错过的进度。
@@ -300,8 +308,7 @@ export function useAgentEvents(): AgentState {
 
   return {
     messages,
-    toolEvents,
-    streaming,
+    steps,
     approval,
     error,
     busy: busy || submitting,

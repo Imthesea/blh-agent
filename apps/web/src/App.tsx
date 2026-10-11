@@ -92,8 +92,7 @@ export function App() {
         <main className="main">
           <ChatPanel
             messages={state.messages}
-            streaming={state.streaming}
-            toolEvents={state.toolEvents}
+            steps={state.steps}
             busy={state.busy}
             approval={state.approval}
           />
