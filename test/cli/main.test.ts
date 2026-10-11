@@ -72,7 +72,7 @@ describe("buildHarness 装配", () => {
   });
 
   it("compactor 与 compact 工具就位", async () => {
-    const { buildHarness } = await import("../../src/cli/main.js");
+    const { buildHarness } = await import("../../src/cli/buildHarness.js");
     const harness = buildHarness(tmpDir);
     expect(harness.compactor?.toolResultsDir).toBe(
       path.join(tmpDir, ".task_outputs", "tool-results"),
@@ -81,7 +81,7 @@ describe("buildHarness 装配", () => {
   }, 10000);
 
   it("planning 工具与 todoManager 就位", async () => {
-    const { buildHarness } = await import("../../src/cli/main.js");
+    const { buildHarness } = await import("../../src/cli/buildHarness.js");
     const harness = buildHarness(tmpDir);
     expect(harness.todoManager).toBeDefined();
     const names = harness.tools.list().map((tool) => tool.name);
@@ -94,14 +94,14 @@ describe("buildHarness 装配", () => {
   });
 
   it("memory 装配到 .memory 目录", async () => {
-    const { buildHarness } = await import("../../src/cli/main.js");
+    const { buildHarness } = await import("../../src/cli/buildHarness.js");
     const harness = buildHarness(tmpDir);
     expect(harness.memory).toBeDefined();
     expect(harness.memory?.store.directory).toBe(path.join(tmpDir, ".memory"));
   });
 
   it("jobs 装配到 scheduled_tasks.json 与三个 cron 工具", async () => {
-    const { buildHarness } = await import("../../src/cli/main.js");
+    const { buildHarness } = await import("../../src/cli/buildHarness.js");
     const harness = buildHarness(tmpDir);
     expect(harness.jobs).toBeDefined();
     const names = harness.tools.list().map((tool) => tool.name);
@@ -125,13 +125,13 @@ describe("buildHarness 装配", () => {
         },
       ]),
     );
-    const { buildHarness } = await import("../../src/cli/main.js");
+    const { buildHarness } = await import("../../src/cli/buildHarness.js");
     const harness = buildHarness(tmpDir);
     expect(harness.jobs?.cron.listJobs().map((job) => job.id)).toContain("cron_test1");
   });
 
   it("buildHarness wires agents", async () => {
-    const { buildHarness } = await import("../../src/cli/main.js");
+    const { buildHarness } = await import("../../src/cli/buildHarness.js");
     const harness = buildHarness(tmpDir);
     expect(harness.agents).toBeDefined();
     const names = harness.tools.list().map((tool) => tool.name);
@@ -144,7 +144,7 @@ describe("buildHarness 装配", () => {
   });
 
   it("buildHarness wires extensions", async () => {
-    const { buildHarness } = await import("../../src/cli/main.js");
+    const { buildHarness } = await import("../../src/cli/buildHarness.js");
     const harness = buildHarness(tmpDir);
     expect(harness.extensions).toBeDefined();
     const names = harness.tools.list().map((tool) => tool.name);
@@ -153,7 +153,7 @@ describe("buildHarness 装配", () => {
   });
 
   it("buildHarness wires workflow and goal", async () => {
-    const { buildHarness } = await import("../../src/cli/main.js");
+    const { buildHarness } = await import("../../src/cli/buildHarness.js");
     const harness = buildHarness(tmpDir);
     expect(harness.goal).toBeDefined();
     expect(harness.workflow).toBe(path.join(tmpDir, ".workflow_runtime"));
@@ -170,7 +170,7 @@ describe("buildHarness 装配", () => {
         path.join(tmpDir, ".blh", "mcp.yaml"),
         ["- name: fakehttp", `  url: ${server.url}`, ""].join("\n"),
       );
-      const { buildHarness } = await import("../../src/cli/main.js");
+      const { buildHarness } = await import("../../src/cli/buildHarness.js");
       const harness = buildHarness(tmpDir);
       // 连接是后台异步进行的，轮询等待工具注册完成。
       const toolName = "mcp__fakehttp__search";

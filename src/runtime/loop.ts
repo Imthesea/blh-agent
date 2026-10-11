@@ -110,6 +110,8 @@ export async function runAgentLoop(
   let reactiveRetries = 0;
   let iterations = 0;
   let modelMessages: readonly ChatMessage[] = transcript.messages;
+  // 流式失败时保留的半成品文字，用于彻底失败时落盘，避免白写内容丢失。
+  let streamPartial = "";
 
   if (events !== undefined) await events.emit({ type: "turn_start" });
   harness.tracer?.beginTurn(activeRequest);
@@ -180,7 +182,8 @@ export async function runAgentLoop(
             usedStream = true;
           } catch (error) {
             if (error instanceof TurnCancelledError) throw error;
-            const partialText = error instanceof StreamFailedError ? error.partialText : "";
+            let partialText = error instanceof StreamFailedError ? error.partialText : "";
+            streamPartial = partialText;
             log.warn("stream failed, falling back to non-streaming", {
               error: error instanceof Error ? error.message : String(error),
             });
@@ -193,15 +196,47 @@ export async function runAgentLoop(
               retries: reactiveRetries,
               usage: null,
             });
-            const response = await requestAssistantMessage(
-              harness.provider,
-              modelMessages,
-              tools,
-              signal,
-            );
-            message = response.message;
-            usage = response.usage;
-            await emitRecoveredStreamText(events, partialText, message);
+            // 流在输出任何文本前就失败：退避后重试一次流式（UI 尚无半截内容，重试无副作用）。
+            if (partialText === "" && signal?.aborted === false) {
+              await new Promise((resolve) => setTimeout(resolve, 500));
+              try {
+                const retried = await streamAssistantMessage(
+                  harness.provider,
+                  modelMessages,
+                  tools,
+                  events,
+                  signal,
+                );
+                message = retried.message;
+                usage = retried.usage;
+                usedStream = true;
+              } catch (retryError) {
+                if (retryError instanceof TurnCancelledError) throw retryError;
+                partialText = retryError instanceof StreamFailedError ? retryError.partialText : "";
+                streamPartial = partialText;
+                const response = await requestAssistantMessageComplete(
+                  harness.provider,
+                  modelMessages,
+                  tools,
+                  events,
+                  signal,
+                  partialText,
+                );
+                message = response.message;
+                usage = response.usage;
+              }
+            } else {
+              const response = await requestAssistantMessageComplete(
+                harness.provider,
+                modelMessages,
+                tools,
+                events,
+                signal,
+                partialText,
+              );
+              message = response.message;
+              usage = response.usage;
+            }
           }
         } else {
           const response = await requestAssistantMessage(
@@ -263,6 +298,10 @@ export async function runAgentLoop(
           }
           reactiveRetries += 1;
           continue;
+        }
+        // 流式与非流式都失败：保留已生成的半成品文字，标为 cancelled，避免白写内容丢失。
+        if (streamPartial !== "") {
+          transcript.append({ role: "assistant", content: streamPartial, cancelled: true });
         }
         throw error;
       }
@@ -495,27 +534,23 @@ async function requestAssistantMessage(
   return { message, usage: null };
 }
 
-async function emitRecoveredStreamText(
+/**
+ * 流式失败后的非流式兜底：拿到完整回复后，用 assistant_text_complete 事件让 UI
+ * 用完整文本整体替换之前已展示的半截内容，而不是拼接/补后缀。
+ */
+async function requestAssistantMessageComplete(
+  provider: ChatProvider,
+  messages: readonly ChatMessage[],
+  tools: ToolDefinition[],
   events: EventBus,
+  signal: AbortSignal | undefined,
   partialText: string,
-  message: ChatMessage,
-): Promise<void> {
-  if (partialText === "") return;
-  const completeText = message.content ?? "";
-  if (completeText.startsWith(partialText)) {
-    const suffix = completeText.slice(partialText.length);
-    if (suffix !== "") await events.emit({ type: "assistant_text_delta", text: suffix });
-    return;
+): Promise<{ message: ChatMessage; usage: ChatUsage | null }> {
+  const response = await requestAssistantMessage(provider, messages, tools, signal);
+  const completeText = response.message.content ?? "";
+  // 有完整文本要替换，或之前展示过半截需要清空时，才发替换事件。
+  if (partialText !== "" || completeText !== "") {
+    await events.emit({ type: "assistant_text_complete", text: completeText });
   }
-  if (completeText !== "") {
-    await events.emit({
-      type: "assistant_text_delta",
-      text: `\n\n[stream recovered; full response]\n${completeText}`,
-    });
-    return;
-  }
-  await events.emit({
-    type: "assistant_text_delta",
-    text: "\n\n[stream recovered; previous partial text may be incomplete]",
-  });
+  return response;
 }

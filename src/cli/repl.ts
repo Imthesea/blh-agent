@@ -57,6 +57,16 @@ function renderStreamEvent(io: ReplIO, event: AgentEvent, state: { textOpen: boo
       state.textOpen = true;
       io.write(event.text);
       return;
+    case "assistant_text_complete":
+      // 流式中断后由非流式兜底的完整回复：终端无法回删，先换行，再整体打印。
+      if (state.textOpen) {
+        io.write("\n");
+        state.textOpen = false;
+        io.print(`[流式中断，完整回复]\n${event.text}`);
+      } else {
+        io.print(event.text);
+      }
+      return;
     case "tool_call":
       // 模型要调用工具：先给上面的文本收尾换行，再打印 [tool] 工具名 + 参数。
       if (state.textOpen) {
@@ -244,7 +254,7 @@ export async function repl(
           // 是否已经流式输出过文本（若走的是流式，就不要再重复打印最终文本）。
           let streamed = false;
           const off = events.subscribe((event) => {
-            if (event.type === "assistant_text_delta") streamed = true;
+            if (event.type === "assistant_text_delta" || event.type === "assistant_text_complete") streamed = true;
             renderStreamEvent(io, event, state);
           });
           try {

@@ -141,6 +141,10 @@ export function useAgentEvents(): AgentState {
             streamBuf.current.push(event.text);
             setStreaming(streamBuf.current.join(""));
             break;
+          case "assistant_text_complete":
+            streamBuf.current = [event.text];
+            setStreaming(event.text);
+            break;
           case "tool_call":
             setToolEvents((ts) => [
               ...ts,

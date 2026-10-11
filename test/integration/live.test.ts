@@ -4,7 +4,7 @@ const LIVE = !!process.env.BLH_LIVE;
 
 describe.skipIf(!LIVE)("live API smoke", () => {
   it("answers a trivial prompt", async () => {
-    const { buildHarness } = await import("../../src/cli/main.js");
+    const { buildHarness } = await import("../../src/cli/buildHarness.js");
     const harness = buildHarness();
     const transcript = harness.newTranscript();
     await harness.runTurn(transcript, "Reply with exactly: pong");

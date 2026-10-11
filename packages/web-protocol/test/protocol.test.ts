@@ -15,6 +15,7 @@ describe("web protocol", () => {
     expect([...WEB_EVENT_TYPES]).toEqual([
       "turn_start",
       "assistant_text_delta",
+      "assistant_text_complete",
       "tool_call",
       "tool_result",
       "turn_cancelled",
@@ -28,6 +29,7 @@ describe("web protocol", () => {
     const events: WebEvent[] = [
       { type: "turn_start" },
       { type: "assistant_text_delta", text: "hello" },
+      { type: "assistant_text_complete", text: "hello" },
       { type: "tool_call", id: "call_1", name: "bash", arguments: "{}" },
       {
         type: "tool_result",

@@ -997,6 +997,7 @@ describe("agentLoop streaming events", () => {
       "turn_start",
       "tool_call",
       "tool_result",
+      "assistant_text_complete",
       "turn_end",
     ]);
     expect(transcript.lastAssistantTextAfter(0)).toBe("done");
@@ -1013,7 +1014,10 @@ describe("agentLoop streaming events", () => {
     const deltas = events.filter((event) => event.type === "assistant_text_delta");
     expect(deltas).toEqual([
       { type: "assistant_text_delta", text: "Hel" },
-      { type: "assistant_text_delta", text: "lo world" },
+    ]);
+    const completes = events.filter((event) => event.type === "assistant_text_complete");
+    expect(completes).toEqual([
+      { type: "assistant_text_complete", text: "Hello world" },
     ]);
     expect(transcript.lastAssistantTextAfter(0)).toBe("Hello world");
   });

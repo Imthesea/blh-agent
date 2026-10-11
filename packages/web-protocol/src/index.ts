@@ -16,6 +16,7 @@ export interface ChatMessage {
 export type AgentEvent =
   | { type: "turn_start" }
   | { type: "assistant_text_delta"; text: string }
+  | { type: "assistant_text_complete"; text: string }
   | { type: "tool_call"; id: string; name: string; arguments: string }
   | { type: "tool_result"; id: string; name: string; output: string; isError: boolean }
   | { type: "turn_cancelled"; text: string }
@@ -35,6 +36,7 @@ export type WebEvent =
 export const WEB_EVENT_TYPES = [
   "turn_start",
   "assistant_text_delta",
+  "assistant_text_complete",
   "tool_call",
   "tool_result",
   "turn_cancelled",

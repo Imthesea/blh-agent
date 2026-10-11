@@ -12,8 +12,6 @@ import type { ApprovalAsker, ApprovalDecision } from "../security/approval.js";
 import { startWebServerFromCli } from "./web.js";
 import { buildHarness } from "./buildHarness.js";
 
-export { buildHarness };
-
 export const log = createLogger("cli");
 
 export interface ParsedCliArgs {
