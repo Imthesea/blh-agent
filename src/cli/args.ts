@@ -71,6 +71,8 @@ export const USAGE = `用法: blh [-h] [-p 提示词] [--provider 厂商] [--mod
   --max-output-chars N    最大捕获输出字符数
   --dangerously-skip-permissions
                           允许所有 bash 命令，除了硬性禁止规则
+  --sandbox-mode MODE     文件边界：full（默认，不限制）| workspace（限制在 sandbox-root 内）
+  --sandbox-root 目录     workspace 模式的可写根目录（默认 workdir）
   --continue [文件]       继续之前的会话（最近一次，或 .sessions/ 里的文件）
   blh web [--port N] [--dev] [--workdir 目录]
                           启动 web 交互式工作台（端口优先级：--port、BLH_WEB_PORT、8123）
@@ -97,6 +99,8 @@ export function parseCliArgs(argv: string[]): ParsedCliArgs {
         "max-output-chars": { type: "string" },
         "dangerously-skip-permissions": { type: "boolean" },
         port: { type: "string" },
+        "sandbox-mode": { type: "string" },
+        "sandbox-root": { type: "string" },
         dev: { type: "boolean" },
       },
       strict: true,
@@ -111,6 +115,8 @@ export function parseCliArgs(argv: string[]): ParsedCliArgs {
   const provider = stringValue(values, "provider");
   const bashTimeout = stringValue(values, "bash-timeout");
   const maxOutputChars = stringValue(values, "max-output-chars");
+  const sandboxMode = stringValue(values, "sandbox-mode");
+  const sandboxRoot = stringValue(values, "sandbox-root");
   const workdirValue = stringValue(values, "workdir");
   const prompt = stringValue(values, "print");
   const help = values.help === true;
@@ -128,6 +134,8 @@ export function parseCliArgs(argv: string[]): ParsedCliArgs {
   if (provider !== undefined) cli.provider = provider;
   if (bashTimeout !== undefined) cli.bash_timeout = bashTimeout;
   if (maxOutputChars !== undefined) cli.max_output_chars = maxOutputChars;
+  if (sandboxMode !== undefined) cli.sandbox_mode = sandboxMode;
+  if (sandboxRoot !== undefined) cli.sandbox_root = sandboxRoot;
   if (workdirValue !== undefined) cli.workdir = workdirValue;
 
   return {

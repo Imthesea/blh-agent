@@ -19,10 +19,15 @@ describe("safePath", () => {
     expect(safePath(dir, "a/b.txt")).toBe(path.join(dir, "a", "b.txt"));
   });
 
-  it("throws PathEscapeError on escape", async () => {
+  it("full 模式（不传 sandboxRoot）不限制越界", async () => {
+    const { safePath } = await import("../../src/tools/files.js");
+    expect(safePath(dir, "../evil.txt")).toBe(path.resolve(dir, "..", "evil.txt"));
+  });
+
+  it("workspace 模式越界抛 PathEscapeError", async () => {
     const { safePath, PathEscapeError } = await import("../../src/tools/files.js");
-    expect(() => safePath(dir, "../evil.txt")).toThrow(PathEscapeError);
-    expect(() => safePath(dir, "../evil.txt")).toThrow("path escapes workdir:");
+    expect(() => safePath(dir, "../evil.txt", dir)).toThrow(PathEscapeError);
+    expect(() => safePath(dir, "../evil.txt", dir)).toThrow("path escapes sandbox root:");
   });
 });
 
@@ -62,6 +67,18 @@ describe("writeFile", () => {
     );
     await expect(fs.readFile(path.join(dir, "sub", "out.txt"), "utf8")).resolves.toBe("hello");
   });
+
+  it("full 模式可写 workdir 之外的绝对路径", async () => {
+    const { writeFile } = await import("../../src/tools/files.js");
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), "blh-outside-"));
+    try {
+      const target = path.join(outside, "out.txt");
+      await expect(writeFile(dir, { path: target, content: "x" })).resolves.toContain("wrote");
+      await expect(fs.readFile(target, "utf8")).resolves.toBe("x");
+    } finally {
+      await fs.rm(outside, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("editFile", () => {
@@ -87,7 +104,7 @@ describe("editFile", () => {
 });
 
 describe("symlink escape", () => {
-  it.skipIf(process.platform === "win32")("blocks symlink escape for read and write", async () => {
+  it.skipIf(process.platform === "win32")("blocks symlink escape for read and write in workspace mode", async () => {
     const { readFile, writeFile, PathEscapeError } = await import("../../src/tools/files.js");
     const outside = await fs.mkdtemp(path.join(os.tmpdir(), "blh-outside-"));
     try {
@@ -95,11 +112,11 @@ describe("symlink escape", () => {
       await fs.writeFile(path.join(outside, "target.txt"), "safe");
       await fs.symlink(outside, path.join(dir, "link"), "dir");
       await fs.symlink(path.join(outside, "target.txt"), path.join(dir, "inside.txt"), "file");
-      await expect(readFile(dir, { path: "link/secret.txt" })).rejects.toThrow(PathEscapeError);
-      await expect(writeFile(dir, { path: "link/new.txt", content: "x" })).rejects.toThrow(
+      await expect(readFile(dir, { path: "link/secret.txt" }, dir)).rejects.toThrow(PathEscapeError);
+      await expect(writeFile(dir, { path: "link/new.txt", content: "x" }, dir)).rejects.toThrow(
         PathEscapeError,
       );
-      await expect(writeFile(dir, { path: "inside.txt", content: "escaped" })).rejects.toThrow(
+      await expect(writeFile(dir, { path: "inside.txt", content: "escaped" }, dir)).rejects.toThrow(
         PathEscapeError,
       );
       await expect(fs.readFile(path.join(outside, "target.txt"), "utf8")).resolves.toBe("safe");

@@ -298,6 +298,25 @@ export function loadConfig(options: LoadConfigOptions, externalDiagnostics?: Dia
     diagnostics,
   );
 
+  const rawSandboxMode =
+    stringOrUndefined(cliValues.sandbox_mode) ??
+    readEnv("BLH_SANDBOX_MODE") ??
+    stringOrUndefined(fileValues.sandbox_mode) ??
+    "full";
+  const sandboxMode: "full" | "workspace" =
+    rawSandboxMode === "workspace" ? "workspace" : "full";
+  if (rawSandboxMode !== "full" && rawSandboxMode !== "workspace") {
+    diagnostics.push({
+      type: "warning",
+      message: `未知 sandbox_mode '${rawSandboxMode}'，已回退 full`,
+      path: "sandbox_mode",
+    });
+  }
+  const sandboxRoot =
+    stringOrUndefined(cliValues.sandbox_root) ??
+    readEnv("BLH_SANDBOX_ROOT") ??
+    stringOrUndefined(fileValues.sandbox_root) ??
+    runtimeWorkdir;
   const config: Config = {
     apiKey,
     ...(baseUrl ? { baseUrl } : {}),
@@ -307,6 +326,8 @@ export function loadConfig(options: LoadConfigOptions, externalDiagnostics?: Dia
     bashTimeout,
     maxOutputChars,
     mcpServers,
+    sandboxMode,
+    sandboxRoot,
   };
 
   // 向后兼容：未显式传入收集器时，仍以抛错方式阻断，并聚合全部错误。

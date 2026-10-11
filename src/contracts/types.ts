@@ -81,6 +81,10 @@ export interface Config {
   maxOutputChars: number;
   /** 启动时自动连接的 MCP 服务器列表（来自配置文件的 mcp_servers） */
   mcpServers?: McpServerConfig[];
+  /** 文件路径边界策略：默认 "full"（不限制，可写任意路径）；"workspace" 限制在 sandboxRoot 内 */
+  sandboxMode?: "full" | "workspace";
+  /** workspace 模式下允许读写的根目录，默认 = workdir */
+  sandboxRoot?: string;
 }
 
 export interface ChatProvider {

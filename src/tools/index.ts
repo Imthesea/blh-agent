@@ -6,6 +6,8 @@ import { glob } from "./glob.js";
 
 export function registerBuiltinTools(registry: ToolRegistry, config: Config): void {
   const workdir = config.workdir;
+  const sandboxRoot =
+    config.sandboxMode === "workspace" ? (config.sandboxRoot ?? workdir) : undefined;
 
   registry.register({
     name: "bash",
@@ -34,7 +36,7 @@ export function registerBuiltinTools(registry: ToolRegistry, config: Config): vo
       },
       required: ["path"],
     },
-    handler: (args) => readFile(workdir, args),
+    handler: (args) => readFile(workdir, args, sandboxRoot),
   });
 
   registry.register({
@@ -48,7 +50,7 @@ export function registerBuiltinTools(registry: ToolRegistry, config: Config): vo
       },
       required: ["path", "content"],
     },
-    handler: (args) => writeFile(workdir, args),
+    handler: (args) => writeFile(workdir, args, sandboxRoot),
   });
 
   registry.register({
@@ -63,7 +65,7 @@ export function registerBuiltinTools(registry: ToolRegistry, config: Config): vo
       },
       required: ["path", "old_text", "new_text"],
     },
-    handler: (args) => editFile(workdir, args),
+    handler: (args) => editFile(workdir, args, sandboxRoot),
   });
 
   registry.register({

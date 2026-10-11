@@ -268,6 +268,19 @@ describe("parseCliArgs", () => {
     expect(parsed.dev).toBe(true);
   });
 
+  it("解析 --sandbox-mode 与 --sandbox-root", async () => {
+    const { parseCliArgs } = await import("../../src/cli/args.js");
+    const parsed = parseCliArgs(["--sandbox-mode", "workspace", "--sandbox-root", "C:\\root"]);
+    expect(parsed.cli.sandbox_mode).toBe("workspace");
+    expect(parsed.cli.sandbox_root).toBe("C:\\root");
+  });
+
+  it("不带 sandbox 参数时不写入 cli", async () => {
+    const { parseCliArgs } = await import("../../src/cli/args.js");
+    const parsed = parseCliArgs(["-p", "hi"]);
+    expect(parsed.cli.sandbox_mode).toBeUndefined();
+    expect(parsed.cli.sandbox_root).toBeUndefined();
+  });
   it("无 web 子命令时不带 web/port/dev 标记", async () => {
     const { parseCliArgs } = await import("../../src/cli/args.js");
     const parsed = parseCliArgs(["-p", "hi"]);
