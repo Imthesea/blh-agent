@@ -1,5 +1,7 @@
 # blh
 
+**仓库地址：[github.com/Imthesea/blh-agent](https://github.com/Imthesea/blh-agent)**
+
 > 一个用 TypeScript 从零实现的类 Claude Code 终端编码 Agent：通过 OpenAI 兼容 API 驱动，内置 20+ 工具、完整的权限体系与上下文管理，并附带一个 React + SSE 的 Web 工作台。
 >
 > A Claude Code-style terminal coding agent written from scratch in TypeScript, featuring 20+ built-in tools, a pluggable permission system, context compaction, multi-agent collaboration, cron scheduling, MCP support, and a React + SSE web workbench.
@@ -250,7 +252,7 @@ pnpm dev -- --provider deepseek --model deepseek-chat
 
 | 目录 | 包名 | 说明 |
 |---|---|---|
-| `src/` | `blh` | CLI 入口与 Agent 核心,按子系统划分:`agents`(多智能体/消息总线/worktree)、`compaction`(上下文压缩)、`core`(主循环)、`extensions`(技能/MCP)、`goals`(目标闭环)、`jobs`(后台任务)、`memory`(长期记忆)、`planning`(计划追踪)、`providers`(模型接入)、`security`(权限规则/审批)、`session`(会话)、`tools`(工具注册)、`workflow`(工作流运行时) |
+| `src/` | `blh` | CLI 入口与 Agent 核心,按子系统划分:`agents`(多智能体/消息总线/worktree)、`compaction`(上下文压缩)、`runtime`(主循环)、`extensions`(技能/MCP)、`goals`(目标闭环)、`jobs`(后台任务)、`memory`(长期记忆)、`planning`(计划追踪)、`providers`(模型接入)、`security`(权限规则/审批)、`session`(会话)、`tools`(工具注册)、`workflow`(工作流运行时) |
 | `packages/logger` | `@blh/logger` | 日志库(node / browser 双端) |
 | `packages/web-client` | `@blh/web-client` | Web 前端与后端通信的 API/SSE 客户端 |
 | `apps/web-server` | `@blh/web-server` | Web 工作台后端(HTTP + SSE 广播) |
