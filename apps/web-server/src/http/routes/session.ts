@@ -88,7 +88,7 @@ export async function handleSessionRoutes(
     const response: SessionInfo = {
       sessionId: handle.id,
       workdir: ctx.workdir,
-      messages: [...handle.transcript.messages],
+      messages: [...handle.transcript.messagesWithIds],
     };
     sendJson(res, 200, response);
     return true;

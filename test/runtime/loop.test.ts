@@ -405,7 +405,7 @@ describe("agentLoop 压缩集成", () => {
     await harness.runTurn(transcript, "note then compact");
     // 同批 write_note 的副作用在压缩前完成，不丢失
     expect(sideEffects).toEqual(["hello"]);
-    expect(transcript.messages).toHaveLength(3); // system + [Compacted] 摘要 + 最终答复
+    expect(transcript.messages).toHaveLength(4); // system + 摘要 + 保留的用户请求 + 最终答复
     expect(transcript.messages[0]?.role).toBe("system");
     expect(transcript.messages[1]?.content?.startsWith("[已压缩]")).toBe(true);
     expect(transcript.messages[1]?.content).toContain(
@@ -413,6 +413,8 @@ describe("agentLoop 压缩集成", () => {
     );
     expect(transcript.messages[1]?.content).toContain("conversation summary");
     expect(transcript.messages[1]?.content).not.toContain("Full transcript:");
+    expect(transcript.messages[2]?.role).toBe("user");
+    expect(transcript.messages[2]?.content).toBe("note then compact");
     expect(existsSync(path.join(tmpDir, ".transcripts"))).toBe(false);
   });
 

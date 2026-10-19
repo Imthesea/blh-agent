@@ -103,6 +103,7 @@ export interface WebJobs {
 /** 投影后的会话视图（结构上对应根包 Transcript）。 */
 export interface TranscriptLike {
   readonly messages: readonly ChatMessage[];
+  readonly messagesWithIds: readonly ChatMessage[];
   readonly lastSeq: number;
   readonly systemMessage: ChatMessage | null;
 }

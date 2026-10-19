@@ -83,6 +83,13 @@ function isAssistantMessageEvent(event: SessionEvent): boolean {
   return isMessageEvent(event) && event.message.role === "assistant";
 }
 
+/** 压缩时判定一条投影消息是否保留：用户消息永不压缩掉；其余按 firstKeptSeq 阈值保留。 */
+function isKeptAfterCompaction(item: ProjectedMessage, firstKeptSeq: number | null): boolean {
+  if (item.sourceSeq === null) return false;
+  if (item.message.role === "user") return true;
+  return firstKeptSeq !== null && item.sourceSeq >= firstKeptSeq;
+}
+
 /**
  * 事件日志的投影核心：把 append-only 事件重放成当前上下文消息。
  *
@@ -107,12 +114,7 @@ function projectEvents(events: readonly SessionEvent[]): ProjectedMessage[] {
       projected.push({ message: event.message, sourceSeq: event.seq });
     } else if (event.type === "compaction") {
       const firstKeptSeq = event.firstKeptSeq;
-      const kept =
-        firstKeptSeq === null
-          ? []
-          : projected.filter(
-              (item) => item.sourceSeq !== null && item.sourceSeq >= firstKeptSeq,
-            );
+      const kept = projected.filter((item) => isKeptAfterCompaction(item, firstKeptSeq));
       projected = [{ message: event.message, sourceSeq: null }, ...kept];
     } else if (event.type === "messageCancelled") {
       projected = projected.map((item) =>
@@ -188,6 +190,15 @@ export class Transcript {
     return Object.freeze(messages);
   }
 
+  /** 带稳定 id 的对话视图（id 取自事件 seq；摘要用固定 id），供序列化给前端做稳定 React key。 */
+  get messagesWithIds(): readonly ChatMessage[] {
+    const withIds = this.projected.map((item) => ({
+      ...item.message,
+      id: item.sourceSeq === null ? "summary" : String(item.sourceSeq),
+    }));
+    return this.system ? [this.system, ...withIds] : withIds;
+  }
+
   /** 纯对话（不含 system），供压缩器等只关心历史的调用方使用。 */
   get conversation(): readonly ChatMessage[] {
     return Object.freeze(this.projected.map((item) => item.message));
@@ -251,10 +262,7 @@ export class Transcript {
       firstKeptSeq,
     };
     this.commit(event);
-    const kept =
-      firstKeptSeq === null
-        ? []
-        : this.projected.filter((item) => item.sourceSeq !== null && item.sourceSeq >= firstKeptSeq);
+    const kept = this.projected.filter((item) => isKeptAfterCompaction(item, firstKeptSeq));
     this.projected = [{ message: prepared, sourceSeq: null }, ...kept];
   }
 

@@ -1,8 +1,5 @@
 /**
  * 上下文超长（context overflow）的启发式判定。
- *
- * 关键词部分沿用原有实现；正则部分移植并适配自 pi
- * （MIT License, Copyright (c) 2025 Mario Zechner），覆盖各家厂商的报错措辞。
  */
 
 /** 各厂商上下文超长的报错正则。 */
@@ -42,7 +39,7 @@ const NON_OVERFLOW_PATTERNS = [
 
 const CEREBRAS_BODYLESS_OVERFLOW_PATTERN = /^4(?:00|13)\s*(?:status code)?\s*\(no body\)/i;
 
-/** 原有实现保留的关键词，覆盖 pi 正则没覆盖到的老用例（如 "maximum context"）。 */
+/** 原有实现保留的关键词。 */
 const LEGACY_KEYWORDS = [
   "prompt_too_long",
   "too many tokens",

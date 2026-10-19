@@ -11,8 +11,12 @@ export interface ChatMessage {
   tool_call_id?: string;
   name?: string;
   cancelled?: boolean;
-  /** 压缩摘要消息：前端应隐藏，不作为普通用户轮次渲染 */
+  /** 内部提醒（如更新 todo / goal）：仅作为模型上下文，不在对话 UI 显示 */
+  isInternal?: boolean;
+  /** 压缩摘要：前端渲染为「更早的对话已压缩」折叠条，不作为普通用户消息 */
   isCompactionSummary?: boolean;
+  /** 稳定消息 id（事件 seq），供前端做稳定 React key */
+  id?: string;
 }
 
 export type AgentEvent =

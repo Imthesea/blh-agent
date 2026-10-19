@@ -18,7 +18,7 @@ export interface HookPayloads {
 /** 事件的名称，就是 HookPayloads 里所有键。 */
 export type HookEvent = keyof HookPayloads;
 
-/** 一个钩子函数：接收对应事件的载荷，返回一个字符串或 null。 */
+/** 接收对应事件的载荷，返回一个字符串或 null。 */
 export type HookFn<E extends HookEvent = HookEvent> = (
   payload: HookPayloads[E],
 ) => Promise<string | null>;

@@ -543,6 +543,50 @@ button, input, select, textarea { font-family: inherit; }
 .thinking-body .tool-card { margin-bottom: 8px; }
 .thinking-body .tool-card:last-child { margin-bottom: 0; }
 
+/* ============ compaction checkpoint ============ */
+.checkpoint {
+  margin: 0 0 16px;
+  max-width: 80%;
+}
+.checkpoint-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  padding: 4px 6px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--dsw-alias-label-secondary);
+}
+.checkpoint-head:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  border-radius: 6px;
+}
+.checkpoint-caret {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  transition: transform 0.15s ease;
+  color: var(--dsw-alias-label-tertiary);
+}
+.checkpoint-caret-open {
+  transform: rotate(90deg);
+}
+.checkpoint-body {
+  margin: 6px 0 0;
+  padding: 10px 12px;
+  border: 1px dashed var(--dsw-alias-border-l2);
+  border-radius: 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-bg-base);
+}
+
 /* ============ error banner ============ */
 .error-banner {
   padding: 8px 16px;

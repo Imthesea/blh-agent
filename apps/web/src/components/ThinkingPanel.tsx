@@ -1,14 +1,21 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ThinkingStep } from "./turns";
 import { ToolCallCard } from "./ToolCallCard";
 
 export function ThinkingPanel({ steps, active }: { steps: ThinkingStep[]; active: boolean }) {
   const [expanded, setExpanded] = useState(active);
+  const bodyRef = useRef<HTMLDivElement>(null);
 
   // active 变为 true（开始思考）时展开；变为 false（最终回复生成）时收起。
   useEffect(() => {
     setExpanded(active);
   }, [active]);
+
+  // 内容追加时自动滚到底部，保证新工具/文本可见。
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [steps]);
 
   return (
     <div className="thinking">
@@ -29,7 +36,7 @@ export function ThinkingPanel({ steps, active }: { steps: ThinkingStep[]; active
         )}
       </button>
       {expanded && steps.length > 0 && (
-        <div className="thinking-body">
+        <div className="thinking-body" ref={bodyRef}>
           {steps.map((s) =>
             s.kind === "text" ? (
               <div key={s.id} className="thinking-text">

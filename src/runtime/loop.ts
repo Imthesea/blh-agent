@@ -320,7 +320,7 @@ export async function runAgentLoop(
           });
         }
         if (decision !== null && decision.action === "block") {
-          transcript.append({ role: "user", content: goalReminder(harness.goal, decision) });
+          transcript.append({ role: "user", content: goalReminder(harness.goal, decision), isInternal: true });
           continue;
         }
         harness.tracer?.endTurn();
@@ -424,7 +424,7 @@ export async function runAgentLoop(
       const todoManager = harness.todoManager;
       if (todoManager) {
         const reminder = todoManager.noteRound(usedTodo);
-        if (reminder) transcript.append({ role: "user", content: reminder });
+        if (reminder) transcript.append({ role: "user", content: reminder, isInternal: true });
       }
 
       if (compactRequested && compactor) {

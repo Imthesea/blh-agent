@@ -41,16 +41,16 @@ describe("Transcript", () => {
 
   it("compact 保留边界之后的事实消息", () => {
     const transcript = new Transcript({ system: system("sys") });
-    transcript.append(user("old"));
-    const keptSeq = transcript.append(user("kept"));
-    transcript.append(user("tail"));
+    transcript.append(assistant("old"));
+    const keptSeq = transcript.append(assistant("kept"));
+    transcript.append(assistant("tail"));
     transcript.compact(user("summary"), keptSeq);
 
     expect(transcript.messages).toEqual([
       system("sys"),
       user("summary"),
-      user("kept"),
-      user("tail"),
+      assistant("kept"),
+      assistant("tail"),
     ]);
     expect(transcript.messageSeqAt(0)).toBeNull();
     expect(transcript.messageSeqAt(1)).toBe(keptSeq);
@@ -58,9 +58,23 @@ describe("Transcript", () => {
 
   it("compact null 边界只保留摘要", () => {
     const transcript = new Transcript({ system: system("sys") });
-    transcript.append(user("old"));
+    transcript.append(assistant("old"));
     transcript.compact(user("summary"), null);
     expect(transcript.messages).toEqual([system("sys"), user("summary")]);
+  });
+
+  it("compact 不丢弃用户消息（null 边界也保留）", () => {
+    const transcript = new Transcript({ system: system("sys") });
+    transcript.append(user("q1"));
+    transcript.append(assistant("a1"));
+    transcript.append(user("q2"));
+    transcript.compact(user("summary"), null);
+    expect(transcript.messages).toEqual([
+      system("sys"),
+      user("summary"),
+      user("q1"),
+      user("q2"),
+    ]);
   });
 
   it("rollbackTo 持久化回滚事件并恢复状态", () => {

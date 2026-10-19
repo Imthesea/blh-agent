@@ -53,7 +53,16 @@ function messagesFromEvents(events: readonly SessionEventLike[]): ChatMessage[] 
 export function makeTranscript(events?: readonly SessionEventLike[]): TranscriptLike {
   const messages: ChatMessage[] = [{ role: "system", content: "sys" }];
   if (events !== undefined) messages.push(...messagesFromEvents(events));
-  return { messages, lastSeq: 0, systemMessage: { role: "system", content: "sys" } };
+  return {
+    get messages() {
+      return messages;
+    },
+    get messagesWithIds() {
+      return messages.map((m, i) => ({ ...m, id: `m${i}` }));
+    },
+    lastSeq: 0,
+    systemMessage: { role: "system", content: "sys" },
+  };
 }
 
 /** 把事件列表投影成消息（不处理压缩/回滚，测试仅追加普通消息）。 */

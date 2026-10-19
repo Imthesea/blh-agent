@@ -4,8 +4,6 @@
  * - 行数上限（默认 2000 行）
  * - 字节上限（默认 50KB）
  * 除 bash tail 截断的边界情况外，绝不返回半行。
- *
- * 移植并适配自 pi（MIT License, Copyright (c) 2025 Mario Zechner）。
  */
 
 export const DEFAULT_MAX_LINES = 2000;

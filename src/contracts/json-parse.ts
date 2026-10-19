@@ -1,7 +1,5 @@
 /**
  * 对模型产出的、带未转义换行/控制字符或非法转义的 JSON 做修复后再解析。
- *
- * 移植并适配自 pi（MIT License, Copyright (c) 2025 Mario Zechner）。
  */
 
 const VALID_JSON_ESCAPES = new Set(['"', "\\", "/", "b", "f", "n", "r", "t", "u"]);

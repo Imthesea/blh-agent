@@ -52,8 +52,18 @@ describe("SessionStore", () => {
 
   it("compaction 事件投影为摘要加保留消息", () => {
     const store = SessionStore.create(tmpDir);
-    store.appendEvent(messageEvent(1, "a"));
-    store.appendEvent(messageEvent(2, "b"));
+    store.appendEvent({
+      type: "message",
+      seq: 1,
+      timestamp: new Date().toISOString(),
+      message: { role: "assistant", content: "a" },
+    });
+    store.appendEvent({
+      type: "message",
+      seq: 2,
+      timestamp: new Date().toISOString(),
+      message: { role: "assistant", content: "b" },
+    });
     store.appendEvent({
       type: "compaction",
       seq: 3,
@@ -63,7 +73,7 @@ describe("SessionStore", () => {
     });
     expect(SessionStore.loadMessages(store.path)).toEqual([
       { role: "user", content: "summary" },
-      { role: "user", content: "b" },
+      { role: "assistant", content: "b" },
     ]);
   });
 

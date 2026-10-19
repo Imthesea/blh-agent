@@ -5,8 +5,6 @@
  * 或反之）会导致很多 provider 在 JSON 序列化时出错。合法的 emoji 等基本多文种平面
  * 之外的字符使用正确配对的代理项，不受本函数影响。
  *
- * 移植自 pi（MIT License, Copyright (c) 2025 Mario Zechner）。
- *
  * @param text - 待清洗的文本
  * @returns 移除未配对代理项后的文本
  */

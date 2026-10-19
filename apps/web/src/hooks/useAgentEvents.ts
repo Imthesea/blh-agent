@@ -59,7 +59,7 @@ function nextStepId(): string {
 }
 
 function toUiMessage(m: ChatMessage): UiMessage {
-  return { ...m, id: nextId() };
+  return { ...m, id: m.id ?? nextId() };
 }
 
 export interface AgentState {
