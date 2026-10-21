@@ -13,8 +13,6 @@ export interface ChatMessage {
   cancelled?: boolean;
   /** 内部提醒（如更新 todo / goal）：仅作为模型上下文，不在对话 UI 显示 */
   isInternal?: boolean;
-  /** 压缩摘要：前端渲染为「更早的对话已压缩」折叠条，不作为普通用户消息 */
-  isCompactionSummary?: boolean;
   /** 稳定消息 id（事件 seq），供前端做稳定 React key */
   id?: string;
 }
@@ -57,6 +55,8 @@ export interface SessionInfo {
   sessionId: string | null;
   workdir: string;
   messages: ChatMessage[];
+  /** 最新压缩摘要；无则 null。前端渲染为「更早的对话已压缩」折叠条。 */
+  summary: string | null;
 }
 
 export interface SessionListItem {
@@ -72,6 +72,8 @@ export interface SessionListResponse {
 export interface SessionMessagesResponse {
   file: string;
   messages: ChatMessage[];
+  /** 最新压缩摘要；无则 null。 */
+  summary: string | null;
 }
 
 export interface SessionIdResponse {

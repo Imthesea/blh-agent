@@ -3,6 +3,7 @@ import type { ChatMessage } from "../../src/contracts/types.js";
 import {
   Transcript,
   projectMessages,
+  projectSummary,
   type SessionEvent,
 } from "../../src/session/transcript.js";
 
@@ -43,24 +44,25 @@ describe("Transcript", () => {
     const transcript = new Transcript({ system: system("sys") });
     transcript.append(assistant("old"));
     const keptSeq = transcript.append(assistant("kept"));
-    transcript.append(assistant("tail"));
-    transcript.compact(user("summary"), keptSeq);
+    const tailSeq = transcript.append(assistant("tail"));
+    transcript.compact("summary", keptSeq);
 
+    expect(transcript.summary).toBe("summary");
     expect(transcript.messages).toEqual([
       system("sys"),
-      user("summary"),
       assistant("kept"),
       assistant("tail"),
     ]);
-    expect(transcript.messageSeqAt(0)).toBeNull();
-    expect(transcript.messageSeqAt(1)).toBe(keptSeq);
+    expect(transcript.messageSeqAt(0)).toBe(keptSeq);
+    expect(transcript.messageSeqAt(1)).toBe(tailSeq);
   });
 
-  it("compact null 边界只保留摘要", () => {
+  it("compact null 边界只保留摘要元数据", () => {
     const transcript = new Transcript({ system: system("sys") });
     transcript.append(assistant("old"));
-    transcript.compact(user("summary"), null);
-    expect(transcript.messages).toEqual([system("sys"), user("summary")]);
+    transcript.compact("summary", null);
+    expect(transcript.messages).toEqual([system("sys")]);
+    expect(transcript.summary).toBe("summary");
   });
 
   it("compact 不丢弃用户消息（null 边界也保留）", () => {
@@ -68,13 +70,13 @@ describe("Transcript", () => {
     transcript.append(user("q1"));
     transcript.append(assistant("a1"));
     transcript.append(user("q2"));
-    transcript.compact(user("summary"), null);
+    transcript.compact("summary", null);
     expect(transcript.messages).toEqual([
       system("sys"),
-      user("summary"),
       user("q1"),
       user("q2"),
     ]);
+    expect(transcript.summary).toBe("summary");
   });
 
   it("rollbackTo 持久化回滚事件并恢复状态", () => {
@@ -104,7 +106,7 @@ describe("Transcript", () => {
     transcript.append(user("b"));
     transcript.append(user("c"));
     const beforeCompaction = transcript.lastSeq;
-    transcript.compact(user("summary"), 2);
+    transcript.compact("summary", 2);
     transcript.rollbackTo(beforeCompaction);
 
     expect(transcript.messages).toEqual([
@@ -160,7 +162,7 @@ describe("Transcript", () => {
   it("lastAssistantTextAfter 不依赖消息数组长度", () => {
     const transcript = new Transcript({ system: system("sys") });
     transcript.append(assistant("old"));
-    transcript.compact(user("summary"), 1);
+    transcript.compact("summary", 1);
     const boundary = transcript.lastSeq;
     transcript.append(assistant("new"));
 
@@ -194,6 +196,7 @@ describe("projectMessages", () => {
       { type: "message", seq: 3, timestamp: "c", message: user("recent") },
       { type: "compaction", seq: 4, timestamp: "d", message: user("summary"), firstKeptSeq: null, firstKeptUserSeq: 3 },
     ];
-    expect(projectMessages(events)).toEqual([user("summary"), user("recent")]);
+    expect(projectMessages(events)).toEqual([user("recent")]);
+    expect(projectSummary(events)).toBe("summary");
   });
 });

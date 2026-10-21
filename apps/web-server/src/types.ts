@@ -44,7 +44,9 @@ export interface SessionEventLike {
   timestamp: string;
   type?: string;
   message?: ChatMessage;
+  summary?: string;
   firstKeptSeq?: number | null;
+  firstKeptUserSeq?: number | null;
   to?: number;
   target?: number;
 }
@@ -75,6 +77,7 @@ export interface SessionStoreModule {
   open(filePath: string): SessionStoreLike;
   loadSession(filePath: string): LoadedSessionLike;
   loadMessages(filePath: string): ChatMessage[];
+  loadSummary(filePath: string): string | null;
   remove(filePath: string): void;
   latest(workdir: string): string | null;
 }
@@ -106,6 +109,7 @@ export interface TranscriptLike {
   readonly messagesWithIds: readonly ChatMessage[];
   readonly lastSeq: number;
   readonly systemMessage: ChatMessage | null;
+  readonly summary: string | null;
 }
 
 /** SessionManager 依赖的最小会话运行接口（根 Harness 满足）。 */

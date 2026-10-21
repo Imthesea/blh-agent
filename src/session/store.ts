@@ -2,7 +2,7 @@ import { appendFileSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync 
 import { randomUUID } from "node:crypto";
 import * as path from "node:path";
 import type { ChatMessage } from "../contracts/types.js";
-import { projectMessages, type SessionEvent } from "./transcript.js";
+import { projectMessages, projectSummary, type SessionEvent } from "./transcript.js";
 
 export const CURRENT_SESSION_VERSION = 1;
 
@@ -182,6 +182,11 @@ export class SessionStore {
   /** 读取事件并投影为当前消息列表。 */
   static loadMessages(filePath: string): ChatMessage[] {
     return projectMessages(SessionStore.loadSession(filePath).events);
+  }
+
+  /** 读取事件并投影出最新压缩摘要；无则 null。 */
+  static loadSummary(filePath: string): string | null {
+    return projectSummary(SessionStore.loadSession(filePath).events);
   }
 
   /** 追加一条会话事件；seq 必须严格递增。 */

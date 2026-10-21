@@ -72,9 +72,9 @@ describe("SessionStore", () => {
       firstKeptSeq: 2,
     });
     expect(SessionStore.loadMessages(store.path)).toEqual([
-      { role: "user", content: "summary" },
       { role: "assistant", content: "b" },
     ]);
+    expect(SessionStore.loadSummary(store.path)).toBe("summary");
   });
 
   it("rollback 事件跨进程生效", () => {

@@ -24,12 +24,13 @@ function Checkpoint({ summary }: { summary: string }) {
 
 export function ChatPanel(props: {
   messages: UiMessage[];
+  summary: string | null;
   steps: LiveStep[];
   busy: boolean;
   approval: ApprovalRequest | null;
 }) {
-  const { messages, steps, busy, approval } = props;
-  const blocks = useMemo(() => groupMessages(messages), [messages]);
+  const { messages, summary, steps, busy, approval } = props;
+  const blocks = useMemo(() => groupMessages(messages, summary), [messages, summary]);
   const panelRef = useRef<HTMLDivElement>(null);
 
   // 内容变化（发消息 / 流式回复 / 工具调用 / 状态切换）时自动滚到底部

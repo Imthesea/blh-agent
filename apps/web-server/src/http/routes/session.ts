@@ -81,7 +81,7 @@ export async function handleSessionRoutes(
   if (method === "GET" && pathname === "/api/session") {
     const handle = ctx.session.list()[0];
     if (handle === undefined) {
-      const response: SessionInfo = { sessionId: null, messages: [], workdir: ctx.workdir };
+      const response: SessionInfo = { sessionId: null, messages: [], workdir: ctx.workdir, summary: null };
       sendJson(res, 200, response);
       return true;
     }
@@ -89,6 +89,7 @@ export async function handleSessionRoutes(
       sessionId: handle.id,
       workdir: ctx.workdir,
       messages: [...handle.transcript.messagesWithIds],
+      summary: handle.transcript.summary,
     };
     sendJson(res, 200, response);
     return true;
@@ -119,7 +120,8 @@ export async function handleSessionRoutes(
     }
     try {
       const messages = ctx.sessionStore.loadMessages(filePath);
-      const response: SessionMessagesResponse = { file, messages };
+      const summary = ctx.sessionStore.loadSummary(filePath);
+      const response: SessionMessagesResponse = { file, messages, summary };
       sendJson(res, 200, response);
     } catch {
       sendJson(res, 500, { error: "failed to load session" });

@@ -62,6 +62,9 @@ export function makeTranscript(events?: readonly SessionEventLike[]): Transcript
     },
     lastSeq: 0,
     systemMessage: { role: "system", content: "sys" },
+    get summary() {
+      return null;
+    },
   };
 }
 
@@ -122,6 +125,15 @@ export function makeTestSessionStore(): SessionStoreModule {
     },
     loadMessages(filePath) {
       return messagesFromEvents(this.loadSession(filePath).events);
+    },
+    loadSummary(filePath) {
+      let summary: string | null = null;
+      for (const event of this.loadSession(filePath).events) {
+        if (event.type === "compaction") {
+          summary = event.summary ?? event.message?.content ?? null;
+        }
+      }
+      return summary;
     },
     remove(filePath) {
       rmSync(filePath, { force: true });

@@ -64,6 +64,7 @@ function toUiMessage(m: ChatMessage): UiMessage {
 
 export interface AgentState {
   messages: UiMessage[];
+  summary: string | null;
   steps: LiveStep[];
   approval: ApprovalRequest | null;
   error: string | null;
@@ -83,6 +84,7 @@ export interface AgentState {
 
 export function useAgentEvents(): AgentState {
   const [messages, setMessages] = useState<UiMessage[]>([]);
+  const [summary, setSummary] = useState<string | null>(null);
   const [steps, setSteps] = useState<LiveStep[]>([]);
   const [approval, setApproval] = useState<ApprovalRequest | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -113,6 +115,7 @@ export function useAgentEvents(): AgentState {
       setSessionId(info.sessionId);
       setWorkdir(info.workdir);
       setMessages(info.messages.map(toUiMessage));
+      setSummary(info.summary);
       void listSessions()
         .then((list) => {
           if (disposed.current || seq !== refreshSeq.current) return;
@@ -308,6 +311,7 @@ export function useAgentEvents(): AgentState {
 
   return {
     messages,
+    summary,
     steps,
     approval,
     error,

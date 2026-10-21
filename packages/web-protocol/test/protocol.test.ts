@@ -70,6 +70,7 @@ describe("web protocol", () => {
       sessionId: "session_1",
       workdir: "/tmp/project",
       messages: [message],
+      summary: null,
     };
     const sessionItem: SessionListItem = {
       file: "session_1.jsonl",
@@ -80,6 +81,7 @@ describe("web protocol", () => {
     const sessionMessages: SessionMessagesResponse = {
       file: "session_1.jsonl",
       messages: [message],
+      summary: null,
     };
     const sessionId: SessionIdResponse = { sessionId: "session_1" };
 

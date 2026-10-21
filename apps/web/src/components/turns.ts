@@ -87,13 +87,16 @@ function buildTurn(seg: UiMessage[]): TurnBlock {
 
 /**
  * 把扁平消息按时间顺序投影成「展示块」：
+ * - 摘要（summary 参数，来自会话元数据）渲染成最前的折叠检查点；
  * - 用户消息开启一个新 turn；
  * - 内部提醒（isInternal）完全隐藏；
- * - 压缩摘要（isCompactionSummary）渲染成折叠的检查点；
  * - assistant / tool 归入当前 turn。
  */
-export function groupMessages(messages: UiMessage[]): ConversationBlock[] {
+export function groupMessages(messages: UiMessage[], summary: string | null): ConversationBlock[] {
   const blocks: ConversationBlock[] = [];
+  if (summary !== null) {
+    blocks.push({ kind: "checkpoint", id: "checkpoint", summary });
+  }
   let current: UiMessage[] | null = null;
 
   const flush = () => {
@@ -107,11 +110,6 @@ export function groupMessages(messages: UiMessage[]): ConversationBlock[] {
     if (m.role === "system") continue;
     if (m.role === "user") {
       if (m.isInternal === true) continue;
-      if (m.isCompactionSummary === true) {
-        flush();
-        blocks.push({ kind: "checkpoint", id: m.id ?? "checkpoint", summary: String(m.content ?? "") });
-        continue;
-      }
       flush();
       current = [m];
     } else if (current !== null) {

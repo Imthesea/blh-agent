@@ -185,3 +185,39 @@ S0（元数据 + 估算，纯新增）
 | 删 `estimateChars`、`CONTEXT_CHAR_LIMIT`；常量 token 化；`prepare` 预算必传并全 token；micro/fit/toolResultBudget 改 token | `src/compaction/compactor.ts`、`src/runtime/ports.ts`（prepare 签名） | 全仓无 `estimateChars`/`contextCharLimit`/`contextTokenLimit`/`CHARS_PER_TOKEN` 残留引用；compactor 无阈值可变状态 |
 | loop 传 raw 尺度预算 + answerLimit 同源 | `src/runtime/loop.ts` | 8k 窗口下 gate 与 answerLimit 一致；现有 maxTokens/压缩测试绿 |
 | 测试同步 token 语义 | `test/compaction/compactor.test.ts`、`test/runtime/loop.test.ts` | `pnpm test` + `pnpm lint` 全绿 |
+
+---
+
+## 11. C4 · 摘要进 system prompt（独立立项，待评审）
+
+> S0–S3 已落地。C4 是最后一项：把压缩摘要从「user 消息（isCompactionSummary）」挪进 system prompt 的 `[Archived Context Summary]` 段，避免模型把摘要当新指令、避免污染 user-turn 边界。前端折叠条保留。
+
+### 现状（C4 要改的点）
+
+- `SessionEvent.compaction` 用 `message: ChatMessage` 存摘要（一个带 `isCompactionSummary` 的 user 消息），投影进对话。
+- `Transcript` 的 system 单独持有、不进事件日志（`setSystem` 只改内存）。
+- loop 的模型载荷 = `withSystem(conversation, transcript.systemMessage)`。
+- 前端 `groupMessages` 靠 `isCompactionSummary` user 消息渲染折叠条（checkpoint block）。
+
+### 设计草案（待 grill）
+
+1. **事件 schema**：`SessionEvent.compaction` 的 `message: ChatMessage` 改为 `summary: string`（纯文本）。旧事件（有 `message`）读取时兼容：`summary = event.summary ?? (event.message?.content ?? "")`。
+2. **投影**：compaction 不再把摘要 push 进 projected；改为单独记录 `latestSummary`。`projectEvents` 返回 `{ projected, summary }`。
+3. **Transcript**：新增 `summaryText: string | null`；`messages`/`conversation` 不含摘要；`messagesWithIds`（display 视图）仍放一个 checkpoint 标记供前端折叠条。
+4. **模型载荷**：loop 构造 system 时把 `transcript.summaryText` 拼成 `[Archived Context Summary]\n\n...` 段追加到 system 内容尾部（compaction 发生在轮中，故每请求现算，不依赖 setSystem）。
+5. **前端**：`messagesWithIds` 的 checkpoint 标记保持 `isCompactionSummary`，`groupMessages` 基本不变。
+6. **迁移**：`--continue` 读旧事件时把 `message.content` 当 summary，无需改 `SessionStore`（透传字段）。
+
+### 风险（待 grill 细化）
+
+- 事件 schema 变化 + 旧会话 `--continue` 迁移。
+- system 与摘要的组合时机（轮中 compaction 后下一请求要带最新摘要）。
+- 前端 display 视图与模型视图分叉，可能引入两套真相。
+
+### grill 结论与决策（2026-10-21）
+
+grill 指出 §11 把手段（事件 schema 迁移）当成了目标。**C4 的真实目标只取决于发给 provider 的载荷**，而摘要现在恒在 projected 最前、且至多一条，因此：
+
+- **采纳 C4a（已实施）**：`loop.ts` 新增 `relocateCompactionSummary`，在唯一汇聚点（sanitizeReplay 之前）把 `isCompactionSummary` 的 user 消息抽到 system 的 `[Archived Context Summary]` 段。零迁移、零回归，transcript/compactor/store/前端零改动。
+- **C4b（内部一致性清洗）暂缓**：若未来要「事件里不再有假 user 摘要」，必须同时补 grill 识别出的五个硬伤：连续压缩丢前序摘要（F2）、预算 gate 被摘要骗过（F3）、checkpoint 两套真相与 API 不一致（F5）、rollback 后摘要错位（F9）、`web-server/types.ts` 的 `SessionEventLike` 缺字段（F7）。单独立项。
+- **明确不做**：`summary:string` 改名、摘要 JSON 去包装、把 summary 传给 memory recall（F10 有需求再定）。

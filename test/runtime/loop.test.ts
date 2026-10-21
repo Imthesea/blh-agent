@@ -336,7 +336,7 @@ describe("agentLoop 压缩集成", () => {
     expect(provider.calls).toBe(3);
     expect(transcript.lastAssistantTextAfter(0)).toBe("recovered");
     expect(transcript.messages[0]?.role).toBe("system");
-    expect(transcript.messages[1]?.content?.startsWith("[响应式压缩]")).toBe(true);
+    expect(transcript.summary).toContain("summary of old");
   });
 
   it("重试耗尽后原样抛出", async () => {
@@ -372,7 +372,7 @@ describe("agentLoop 压缩集成", () => {
     const transcript = harness.newTranscript();
     await harness.runTurn(transcript, "a".repeat(1000));
     expect(transcript.messages[0]?.role).toBe("system");
-    expect(transcript.messages[1]?.content?.startsWith("[已压缩]")).toBe(true);
+    expect(transcript.summary).toBe("auto summary");
   });
 
   it("compact 工具在批次闭合后压缩", async () => {
@@ -411,14 +411,11 @@ describe("agentLoop 压缩集成", () => {
     await harness.runTurn(transcript, "note then compact");
     // 同批 write_note 的副作用在压缩前完成，不丢失
     expect(sideEffects).toEqual(["hello"]);
-    expect(transcript.messages).toHaveLength(4); // system + 摘要 + 保留的用户请求 + 最终答复
+    expect(transcript.messages).toHaveLength(3); // system + 保留的用户请求 + 最终答复
     expect(transcript.messages[0]?.role).toBe("system");
-    expect(transcript.messages[1]?.content?.startsWith("[已压缩]")).toBe(true);
-    expect(transcript.messages[1]?.content).toContain("对话摘要（仅供参考）");
-    expect(transcript.messages[1]?.content).toContain("conversation summary");
-    expect(transcript.messages[1]?.content).not.toContain("Full transcript:");
-    expect(transcript.messages[2]?.role).toBe("user");
-    expect(transcript.messages[2]?.content).toBe("note then compact");
+    expect(transcript.summary).toBe("conversation summary");
+    expect(transcript.messages[1]?.role).toBe("user");
+    expect(transcript.messages[1]?.content).toBe("note then compact");
     expect(existsSync(path.join(tmpDir, ".transcripts"))).toBe(false);
   });
 
@@ -1300,8 +1297,46 @@ describe("S1 窗口预算接线", () => {
     await harness.runTurn(transcript, "continue now");
     expect(mainRequests.length).toBeGreaterThan(0);
     const payload = JSON.stringify(mainRequests[0]);
-    expect(payload).toContain("[已压缩]");
+    expect(payload).toContain("[Archived Context Summary]");
     expect(payload).not.toContain("a-20-");
     expect(payload).toContain("continue now");
+  });
+});
+
+describe("摘要进 system prompt（Z）", () => {
+  let tmpDir: string;
+  beforeEach(() => {
+    tmpDir = mkdtempSync(path.join(os.tmpdir(), "loop-c4a-"));
+  });
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("压缩摘要进入 system，不再作为 user 消息发给模型", async () => {
+    const mainRequests: ChatMessage[][] = [];
+    const provider: ChatProvider = {
+      async chat() {
+        return makeTextMessage("history summary");
+      },
+      async chatWithUsage(messages) {
+        mainRequests.push([...messages]);
+        return { message: makeTextMessage("done"), usage: { promptTokens: 10, completionTokens: 2 } };
+      },
+    };
+    const compactor = makeCompactor(tmpDir, provider);
+    const harness = makeHarness([], { compactor, provider, contextWindow: 8192, maxOutputTokens: 4096 });
+    const transcript = harness.newTranscript();
+    for (let i = 0; i < 40; i++) {
+      transcript.append({ role: "user", content: `q-${i}` });
+      transcript.append({ role: "assistant", content: `a-${i}-` + "z".repeat(600) });
+    }
+    await harness.runTurn(transcript, "continue now");
+    expect(mainRequests.length).toBeGreaterThan(0);
+    const payload = mainRequests[0]!;
+    const system = payload.find((m) => m.role === "system");
+    expect(system?.content).toContain("[Archived Context Summary]");
+    expect(system?.content).toContain("history summary");
+    const conversation = payload.filter((m) => m.role !== "system");
+    expect(conversation.some((m) => (m.content ?? "").includes("history summary"))).toBe(false);
   });
 });

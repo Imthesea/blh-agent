@@ -19,9 +19,12 @@ export type SessionEvent =
       message: ChatMessage;
     })
   | (SessionEventBase & {
-      /** 语义压缩：上下文变为摘要消息 + firstKeptSeq 之后仍保留的消息。 */
+      /** 语义压缩：把 firstKeptSeq 之前的历史摘要成 summary；firstKeptSeq/firstKeptUserSeq 之后仍保留。 */
       type: "compaction";
-      message: ChatMessage;
+      /** 摘要纯文本（新格式）。 */
+      summary?: string;
+      /** 旧格式：摘要作为一条假 user 消息。仅向后兼容读取，新事件不再写。 */
+      message?: ChatMessage;
       firstKeptSeq: number | null;
       /** user 消息保留边界：缺省或 null = 全部保留（旧行为）；否则只保留 seq >= 该值的 user。 */
       firstKeptUserSeq?: number | null;
@@ -51,8 +54,8 @@ export interface TranscriptOptions {
 interface ProjectedMessage {
   /** 消息内容。 */
   message: ChatMessage;
-  /** 该消息来源的事件 seq；摘要消息等无来源时为 null。 */
-  sourceSeq: number | null;
+  /** 该消息来源的事件 seq（恒有值：消息事件）。 */
+  sourceSeq: number;
 }
 
 /** 深拷贝一条消息，切断与调用方对象的引用共享。 */
@@ -85,27 +88,44 @@ function isAssistantMessageEvent(event: SessionEvent): boolean {
   return isMessageEvent(event) && event.message.role === "assistant";
 }
 
+/** 事件若携带 message 则返回之（message 事件必有；compaction 仅在旧格式下才有）；否则 null。 */
+function eventMessage(event: SessionEvent): ChatMessage | null {
+  if (event.type === "message") return event.message;
+  if (event.type === "compaction") return event.message ?? null;
+  return null;
+}
+
 /** 压缩时判定一条投影消息是否保留：user 按 firstKeptUserSeq 保留（null = 全部保留）；其余按 firstKeptSeq 阈值保留。 */
 function isKeptAfterCompaction(
   item: ProjectedMessage,
   firstKeptSeq: number | null,
   firstKeptUserSeq: number | null,
 ): boolean {
-  if (item.sourceSeq === null) return false;
   if (item.message.role === "user") {
     return firstKeptUserSeq === null || item.sourceSeq >= firstKeptUserSeq;
   }
   return firstKeptSeq !== null && item.sourceSeq >= firstKeptSeq;
 }
 
+/** 读取 compaction 事件的摘要文本：新格式 summary 优先，旧格式 message.content 兜底。 */
+function compactionSummary(event: Extract<SessionEvent, { type: "compaction" }>): string {
+  return event.summary ?? event.message?.content ?? "";
+}
+
+/** 投影结果：对话消息序列 + 最新摘要。 */
+interface Projection {
+  projected: ProjectedMessage[];
+  latestSummary: string | null;
+}
+
 /**
- * 事件日志的投影核心：把 append-only 事件重放成当前上下文消息。
+ * 事件日志的投影核心：把 append-only 事件重放成当前上下文。
  *
  * 分两步：
  * 1. 先处理 rollback，过滤掉 seq > to 的无效事件；
- * 2. 再按有效事件顺序投影出消息列表。
+ * 2. 再按有效事件顺序投影出消息列表与最新摘要。
  */
-function projectEvents(events: readonly SessionEvent[]): ProjectedMessage[] {
+function projectEvents(events: readonly SessionEvent[]): Projection {
   const effective: SessionEvent[] = [];
   for (const event of events) {
     if (event.type === "rollback") {
@@ -117,6 +137,7 @@ function projectEvents(events: readonly SessionEvent[]): ProjectedMessage[] {
   }
 
   let projected: ProjectedMessage[] = [];
+  let latestSummary: string | null = null;
   for (const event of effective) {
     if (event.type === "message") {
       projected.push({ message: event.message, sourceSeq: event.seq });
@@ -124,7 +145,8 @@ function projectEvents(events: readonly SessionEvent[]): ProjectedMessage[] {
       const firstKeptSeq = event.firstKeptSeq;
       const firstKeptUserSeq = event.firstKeptUserSeq ?? null;
       const kept = projected.filter((item) => isKeptAfterCompaction(item, firstKeptSeq, firstKeptUserSeq));
-      projected = [{ message: event.message, sourceSeq: null }, ...kept];
+      projected = kept;
+      latestSummary = compactionSummary(event) || null;
     } else if (event.type === "messageCancelled") {
       projected = projected.map((item) =>
         item.sourceSeq === event.target
@@ -133,27 +155,33 @@ function projectEvents(events: readonly SessionEvent[]): ProjectedMessage[] {
       );
     }
   }
-  return projected;
+  return { projected, latestSummary };
 }
 
 /** 从事件日志投影出不含 system 的消息列表。 */
 export function projectMessages(events: readonly SessionEvent[]): ChatMessage[] {
-  return projectEvents(events).map((item) => item.message);
+  return projectEvents(events).projected.map((item) => item.message);
+}
+
+/** 从事件日志投影出最新摘要文本；无则 null。 */
+export function projectSummary(events: readonly SessionEvent[]): string | null {
+  return projectEvents(events).latestSummary;
 }
 
 /**
  * 会话状态：append-only 事件日志 + 纯投影。
  *
- * rawEvents 是事实来源；projected 是它的投影结果。所有事实消息都必须
- * 通过 append / compact / rollbackTo / cancelMessage 写入，保证事件日志与
- * 内存视图一致；system 消息单独持有，不进入事件日志。
+ * rawEvents 是事实来源；projected 与 summaryText 是它的投影结果。所有事实消息都必须
+ * 通过 append / compact / rollbackTo / cancelMessage 写入，保证事件日志与内存视图一致；
+ * system 消息单独持有，不进入事件日志；压缩摘要作为 summaryText 元数据单独持有。
  */
 export class Transcript {
   private readonly rawEvents: SessionEvent[];
   private system: ChatMessage | null;
-  // projected 是 rawEvents 的投影结果；projectEvents 是唯一权威实现，
+  // projected / summaryText 是 rawEvents 的投影结果；projectEvents 是唯一权威实现，
   // append/compact/cancelMessage 的增量更新必须与 projectEvents 保持一致（避免每次全量重放）。
   private projected: ProjectedMessage[];
+  private summaryText: string | null;
   private nextSeq = 1;
 
   /** 初始化：校验 system 角色与事件 seq 严格递增，并重放事件得到投影。 */
@@ -167,11 +195,10 @@ export class Transcript {
       this.system = null;
     }
 
-    this.rawEvents = (options.events ?? []).map((event) =>
-      event.type === "message" || event.type === "compaction"
-        ? { ...event, message: prepareMessage(event.message) }
-        : event,
-    );
+    this.rawEvents = (options.events ?? []).map((event) => {
+      const message = eventMessage(event);
+      return message !== null ? { ...event, message: prepareMessage(message) } : event;
+    });
     let previousSeq = 0;
     for (const event of this.rawEvents) {
       if (!Number.isInteger(event.seq) || event.seq <= previousSeq) {
@@ -180,7 +207,9 @@ export class Transcript {
       previousSeq = event.seq;
     }
     this.nextSeq = previousSeq + 1;
-    this.projected = projectEvents(this.rawEvents);
+    const { projected, latestSummary } = projectEvents(this.rawEvents);
+    this.projected = projected;
+    this.summaryText = latestSummary;
   }
 
   /** 原始事件日志（含 rollback 事件）；投影时才决定哪些事件有效。 */
@@ -193,22 +222,27 @@ export class Transcript {
     return this.system;
   }
 
+  /** 最新压缩摘要；无则 null。 */
+  get summary(): string | null {
+    return this.summaryText;
+  }
+
   /** 模型视图：`[system?, ...conversation]`，供模型与现有读逻辑使用。 */
   get messages(): readonly ChatMessage[] {
     const messages = this.system ? [this.system, ...this.projected.map((item) => item.message)] : this.projected.map((item) => item.message);
     return Object.freeze(messages);
   }
 
-  /** 带稳定 id 的对话视图（id 取自事件 seq；摘要用固定 id），供序列化给前端做稳定 React key。 */
+  /** 带稳定 id 的对话视图（id 取自事件 seq），供序列化给前端做稳定 React key。 */
   get messagesWithIds(): readonly ChatMessage[] {
     const withIds = this.projected.map((item) => ({
       ...item.message,
-      id: item.sourceSeq === null ? "summary" : String(item.sourceSeq),
+      id: String(item.sourceSeq),
     }));
     return this.system ? [this.system, ...withIds] : withIds;
   }
 
-  /** 纯对话（不含 system），供压缩器等只关心历史的调用方使用。 */
+  /** 纯对话（不含 system、不含摘要），供压缩器等只关心历史的调用方使用。 */
   get conversation(): readonly ChatMessage[] {
     return Object.freeze(this.projected.map((item) => item.message));
   }
@@ -248,15 +282,12 @@ export class Transcript {
         : prepareMessage({ role: "system", content });
   }
 
-  /** 追加压缩事件；firstKeptSeq 为 null 表示非 user 全部摘要；firstKeptUserSeq 为 null 表示保留全部 user。 */
+  /** 追加压缩事件：firstKeptSeq 为 null 表示非 user 全部摘要；firstKeptUserSeq 为 null 表示保留全部 user。 */
   compact(
-    summaryMessage: ChatMessage,
+    summary: string,
     firstKeptSeq: number | null,
     firstKeptUserSeq: number | null = null,
   ): void {
-    if (summaryMessage.role === "system") {
-      throw new Error("Compaction summary cannot be a system message");
-    }
     if (firstKeptSeq !== null) {
       if (!Number.isInteger(firstKeptSeq) || firstKeptSeq <= 0 || firstKeptSeq > this.lastSeq) {
         throw new Error(`Invalid compaction boundary: ${firstKeptSeq}`);
@@ -274,18 +305,18 @@ export class Transcript {
       }
     }
 
-    const prepared = prepareMessage(summaryMessage);
     const event: SessionEvent = {
       type: "compaction",
       seq: this.nextSeq,
       timestamp: new Date().toISOString(),
-      message: prepared,
+      summary,
       firstKeptSeq,
       firstKeptUserSeq,
     };
     this.commit(event);
     const kept = this.projected.filter((item) => isKeptAfterCompaction(item, firstKeptSeq, firstKeptUserSeq));
-    this.projected = [{ message: prepared, sourceSeq: null }, ...kept];
+    this.projected = kept;
+    this.summaryText = summary || null;
   }
 
   /** 持久化 rollback 事件并重放得到内存状态；seq 必须是 0 或已有事件 seq。 */
@@ -304,7 +335,9 @@ export class Transcript {
       to: seq,
     };
     this.commit(event);
-    this.projected = projectEvents(this.rawEvents);
+    const { projected, latestSummary } = projectEvents(this.rawEvents);
+    this.projected = projected;
+    this.summaryText = latestSummary;
   }
 
   /** 标记某条 assistant 消息取消；目标不需要仍在当前上下文中。 */
@@ -331,7 +364,7 @@ export class Transcript {
     );
   }
 
-  /** 返回对话视图（不含 system）下标对应的消息事件 seq；摘要消息返回 null。 */
+  /** 返回对话视图（不含 system）下标对应的消息事件 seq。 */
   messageSeqAt(index: number): number | null {
     if (!Number.isInteger(index) || index < 0 || index >= this.projected.length) {
       throw new Error(`Message index out of range: ${index}`);
@@ -346,7 +379,6 @@ export class Transcript {
       if (
         item?.message.role === "assistant" &&
         item.message.content !== null &&
-        item.sourceSeq !== null &&
         item.sourceSeq > seq
       ) {
         return item.message.content;
@@ -359,7 +391,7 @@ export class Transcript {
   lastAssistantSeqAfter(seq: number): number | null {
     for (let i = this.projected.length - 1; i >= 0; i--) {
       const item = this.projected[i];
-      if (item?.message.role === "assistant" && item.sourceSeq !== null && item.sourceSeq > seq) {
+      if (item?.message.role === "assistant" && item.sourceSeq > seq) {
         return item.sourceSeq;
       }
     }

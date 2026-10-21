@@ -7,7 +7,7 @@ import type {
 } from "../contracts/types.js";
 import { isPromptTooLong } from "../contracts/provider-errors.js";
 import { summarize } from "../contracts/text.js";
-import { estimatePromptTokens, TokenEstimator } from "../contracts/estimate.js";
+import { estimatePromptTokens, estimateTextTokens, TokenEstimator } from "../contracts/estimate.js";
 import type { StopDecision } from "../contracts/goals.js";
 import type { EventBus } from "./events.js";
 import { PRE_TOOL_USE, POST_TOOL_USE } from "../contracts/hooks.js";
@@ -108,6 +108,18 @@ function withSystem(
   return [system, ...messages];
 }
 
+/** 把压缩摘要（transcript 元数据）拼进 system 的 [Archived Context Summary] 段（Z）。 */
+function injectArchivedSummary(messages: readonly ChatMessage[], summaryText: string | null): ChatMessage[] {
+  if (summaryText === null) return [...messages];
+  const section = `[Archived Context Summary]\n\n${summaryText}`;
+  if (messages[0]?.role === "system") {
+    const system = messages[0];
+    const base = system.content ?? "";
+    return [{ ...system, content: base === "" ? section : `${base}\n\n---\n\n${section}` }, ...messages.slice(1)];
+  }
+  return [{ role: "system", content: section }, ...messages];
+}
+
 /** 从后往前找最后一条 assistant 消息，找不到返回 null。用于确定本轮最终回复。 */
 function lastAssistantMessage(messages: readonly ChatMessage[]): ChatMessage | null {
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -127,7 +139,7 @@ function compactTranscript(transcript: Transcript, plan: CompactionPlan): void {
     plan.firstKeptUserIndex === null
       ? null
       : transcript.messageSeqAt(plan.firstKeptUserIndex);
-  transcript.compact(plan.summaryMessage, firstKeptSeq, firstKeptUserSeq);
+  transcript.compact(plan.summary, firstKeptSeq, firstKeptUserSeq);
 }
 
 /** 核心对话循环。事实状态只能通过 Transcript 事件提交；模型输入是本轮投影。 */
@@ -149,7 +161,9 @@ export async function runAgentLoop(
   const promptBudget = computePromptBudget(contextWindow, maxOutputTokens);
   const model = harness.config.model;
   // compactor 用原始估算（estimateContextTokens），预算需换算到原始尺度，保证 raw × ratio ≤ promptBudget。
-  const compactorBudget = Math.floor(promptBudget / tokenEstimator.ratio(model));
+  // 摘要已作为 system 元数据、不再计入 conversation，故预算里要扣掉它（F3）。
+  const summaryTokens = transcript.summary !== null ? estimateTextTokens(transcript.summary) : 0;
+  const compactorBudget = Math.max(0, Math.floor(promptBudget / tokenEstimator.ratio(model)) - summaryTokens);
   // 摘要后保留的最近 user 原文 token 预算（原始估算尺度，与 compactor 一致）。
   const userRetentionTokens = Math.min(20000, Math.floor(compactorBudget / 4));
 
@@ -189,7 +203,7 @@ export async function runAgentLoop(
       // 第 3 步：准备模型输入（有压缩器时先尝试压缩）。
       const compactor = harness.compactor;
       if (compactor) {
-        const prepared = await compactor.prepare(transcript.conversation, activeRequest, compactorBudget, userRetentionTokens);
+        const prepared = await compactor.prepare(transcript.conversation, activeRequest, compactorBudget, userRetentionTokens, transcript.summary);
         if (prepared.compaction) {
           compactTranscript(transcript, prepared.compaction);
           modelMessages = transcript.messages;
@@ -202,8 +216,8 @@ export async function runAgentLoop(
 
       // 第 4 步：调用模型生成回复（优先流式，失败回退非流式）。
       const tools = harness.tools.list();
-      // replay 前清洗：纯读侧，只作用于本次发送载荷（R5）。
-      const requestMessages = sanitizeReplay(modelMessages);
+      // 先把压缩摘要从对话移进 system（C4a），再做 replay 前清洗（R5）。
+      const requestMessages = sanitizeReplay(injectArchivedSummary(modelMessages, transcript.summary));
       const rawPromptTokens = estimatePromptTokens(requestMessages, tools);
       const estimatedPromptTokens = tokenEstimator.scale(model, rawPromptTokens);
       const answerLimit = computeAnswerLimit(contextWindow, maxOutputTokens, estimatedPromptTokens);
@@ -345,7 +359,7 @@ export async function runAgentLoop(
         }
 
         if (compactor && isPromptTooLong(error) && reactiveRetries < MAX_REACTIVE_RETRIES) {
-          const compacted = await compactor.reactiveCompact(transcript.conversation, activeRequest, userRetentionTokens);
+          const compacted = await compactor.reactiveCompact(transcript.conversation, activeRequest, userRetentionTokens, transcript.summary);
           if (compacted.compaction) {
             compactTranscript(transcript, compacted.compaction);
             modelMessages = transcript.messages;
@@ -494,7 +508,7 @@ export async function runAgentLoop(
       }
 
       if (compactRequested && compactor) {
-        const compacted = await compactor.compactHistory(transcript.conversation, activeRequest, userRetentionTokens);
+        const compacted = await compactor.compactHistory(transcript.conversation, activeRequest, userRetentionTokens, transcript.summary);
         if (compacted.compaction) {
           compactTranscript(transcript, compacted.compaction);
           modelMessages = transcript.messages;
