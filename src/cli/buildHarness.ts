@@ -43,6 +43,7 @@ import { WORKFLOWS } from "../workflow/registry.js";
 import { registerWorkflowTools } from "../workflow/tools.js";
 import { initLogger, createLogger } from "@blh/logger";
 import { Tracer } from "../tracing/tracer.js";
+import { pruneOldDailyFiles } from "../tracing/cleanup.js";
 
 const log = createLogger("cli.buildHarness");
 
@@ -100,6 +101,9 @@ export function buildHarness(
   );
   // 初始化日志系统：让后续所有日志都写入工作目录下统一管理。
   initLogger(config.workdir);
+  // 按天保留：清理超过 60 天的 trace/log（按文件名日期，不依赖 mtime）。
+  const pruned = pruneOldDailyFiles(config.workdir, 60);
+  if (pruned > 0) log.info("清理过期 trace/log", { pruned });
   // 创建 tracer：全链路事件落盘到 <workdir>/.blh/traces，失败静默不影响主流程。
   const tracer = new Tracer(config.workdir);
 

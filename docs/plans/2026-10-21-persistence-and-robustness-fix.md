@@ -172,10 +172,10 @@
 
 | 数据点 | 5 步结论 |
 |---|---|
-| `<workdir>/.blh/logs/blh-{day}.log` | **未登记**。读取无书签（全量）、无保留策略 → 补：按大小/天数滚动 + A5 截断去重 |
+| `<workdir>/.blh/logs/blh-{day}.log` | A5 截断去重 ✅ + 按文件名日期保留 60 天（pruneOldDailyFiles）✅ |
 | `<workdir>/.sessions/chat/{day}.md` | 已移除（A2 按需渲染，不再 eager 落盘）✅ |
 | `<workdir>/.sessions/session_*.jsonl` | 追加但按会话有界；可接受，但需 C1 的删除对齐 |
-| `<workdir>/.blh/traces/{date}.jsonl` | 已登记（JsonlTail 增量读）✅ |
+| `<workdir>/.blh/traces/{date}.jsonl` | 已登记（JsonlTail 增量读）✅ + 按文件名日期保留 60 天 ✅ |
 | `<workdir>/.blh/usage.jsonl` | 已删除（A1 方案 A：trace 为唯一 token 源）✅ |
 | `<workdir>/.task_outputs/*` | 追加但按会话；A3 有界读后无需登记 |
 

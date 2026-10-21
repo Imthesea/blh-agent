@@ -1,8 +1,17 @@
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { removeSessionArtifacts } from "../../src/tracing/cleanup.js";
+import { pruneOldDailyFiles, removeSessionArtifacts } from "../../src/tracing/cleanup.js";
 
 let dir: string;
 beforeEach(() => {
@@ -57,5 +66,50 @@ describe("removeSessionArtifacts", () => {
 
   it("目录不存在不抛错（幂等）", () => {
     expect(() => removeSessionArtifacts(dir, "session_a.jsonl")).not.toThrow();
+  });
+
+  it("不含目标 sid 的文件不被重写（mtime 不变）", () => {
+    const tracesDir = path.join(dir, ".blh", "traces");
+    mkdirSync(tracesDir, { recursive: true });
+    const other = path.join(tracesDir, "2026-09-26.jsonl");
+    writeFileSync(other, JSON.stringify({ ts: 1, type: "turn_start", sid: "other.jsonl", turn: 1 }) + "\n");
+    const past = new Date(Date.now() - 100_000);
+    utimesSync(other, past, past);
+
+    removeSessionArtifacts(dir, "session_a.jsonl");
+
+    expect(statSync(other).mtimeMs).toBe(past.getTime());
+    expect(lines(other)).toHaveLength(1);
+  });
+});
+
+describe("pruneOldDailyFiles", () => {
+  it("删除超过 60 天的 trace/log，保留最近 60 天与非匹配文件", () => {
+    const tracesDir = path.join(dir, ".blh", "traces");
+    const logsDir = path.join(dir, ".blh", "logs");
+    mkdirSync(tracesDir, { recursive: true });
+    mkdirSync(logsDir, { recursive: true });
+
+    writeFileSync(path.join(tracesDir, "2026-08-01.jsonl"), "x\n");
+    writeFileSync(path.join(tracesDir, "2026-10-20.jsonl"), "y\n");
+    writeFileSync(path.join(tracesDir, "notes.txt"), "z\n");
+    writeFileSync(path.join(logsDir, "blh-2026-08-01.log"), "a\n");
+    writeFileSync(path.join(logsDir, "blh-2026-10-20.log"), "b\n");
+    writeFileSync(path.join(logsDir, "blh-readme.txt"), "c\n");
+
+    const now = new Date(2026, 9, 21); // 2026-10-21
+    const removed = pruneOldDailyFiles(dir, 60, now);
+
+    expect(removed).toBe(2);
+    expect(existsSync(path.join(tracesDir, "2026-08-01.jsonl"))).toBe(false);
+    expect(existsSync(path.join(logsDir, "blh-2026-08-01.log"))).toBe(false);
+    expect(existsSync(path.join(tracesDir, "2026-10-20.jsonl"))).toBe(true);
+    expect(existsSync(path.join(logsDir, "blh-2026-10-20.log"))).toBe(true);
+    expect(existsSync(path.join(tracesDir, "notes.txt"))).toBe(true);
+    expect(existsSync(path.join(logsDir, "blh-readme.txt"))).toBe(true);
+  });
+
+  it("目录不存在返回 0（幂等）", () => {
+    expect(pruneOldDailyFiles(dir, 60)).toBe(0);
   });
 });
