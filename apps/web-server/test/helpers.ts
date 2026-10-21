@@ -111,14 +111,6 @@ export function makeTestSessionStore(): SessionStoreModule {
           const event = entry as unknown as SessionEventLike;
           next = Math.max(next, event.seq);
           events.push(event);
-        } else if (header === null && entry["role"] !== undefined) {
-          next += 1;
-          events.push({
-            seq: next,
-            timestamp: new Date(0).toISOString(),
-            type: "message",
-            message: entry as unknown as ChatMessage,
-          });
         }
       }
       return { header, events };
@@ -130,7 +122,7 @@ export function makeTestSessionStore(): SessionStoreModule {
       let summary: string | null = null;
       for (const event of this.loadSession(filePath).events) {
         if (event.type === "compaction") {
-          summary = event.summary ?? event.message?.content ?? null;
+          summary = event.summary ?? null;
         }
       }
       return summary;

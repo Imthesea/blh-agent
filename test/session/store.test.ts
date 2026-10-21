@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -68,7 +68,7 @@ describe("SessionStore", () => {
       type: "compaction",
       seq: 3,
       timestamp: new Date().toISOString(),
-      message: { role: "user", content: "summary" },
+      summary: "summary",
       firstKeptSeq: 2,
     });
     expect(SessionStore.loadMessages(store.path)).toEqual([
@@ -113,23 +113,6 @@ describe("SessionStore", () => {
     ]);
   });
 
-  it("兼容旧格式裸消息并继续追加事件", () => {
-    const file = path.join(tmpDir, "legacy.jsonl");
-    appendFileSync(file, `${JSON.stringify({ role: "user", content: "a" })}\n`);
-    appendFileSync(file, `${JSON.stringify({ role: "assistant", content: "b" })}\n`);
-
-    const store = SessionStore.open(file);
-    expect(SessionStore.loadMessages(file)).toEqual([
-      { role: "user", content: "a" },
-      { role: "assistant", content: "b" },
-    ]);
-    store.appendEvent(messageEvent(3, "c"));
-    expect(SessionStore.loadMessages(file)).toEqual([
-      { role: "user", content: "a" },
-      { role: "assistant", content: "b" },
-      { role: "user", content: "c" },
-    ]);
-  });
 
   it("open 记录现有最大 seq 并拒绝乱序追加", () => {
     const store = SessionStore.create(tmpDir);

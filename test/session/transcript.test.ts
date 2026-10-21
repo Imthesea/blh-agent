@@ -182,7 +182,7 @@ describe("projectMessages", () => {
     const events: SessionEvent[] = [
       { type: "message", seq: 1, timestamp: "a", message: user("a") },
       { type: "message", seq: 2, timestamp: "b", message: user("b") },
-      { type: "compaction", seq: 3, timestamp: "c", message: user("summary"), firstKeptSeq: 2 },
+      { type: "compaction", seq: 3, timestamp: "c", summary: "summary", firstKeptSeq: 2 },
       { type: "rollback", seq: 4, timestamp: "d", to: 2 },
       { type: "message", seq: 5, timestamp: "e", message: user("c") },
     ];
@@ -194,7 +194,7 @@ describe("projectMessages", () => {
       { type: "message", seq: 1, timestamp: "a", message: user("old") },
       { type: "message", seq: 2, timestamp: "b", message: assistant("a1") },
       { type: "message", seq: 3, timestamp: "c", message: user("recent") },
-      { type: "compaction", seq: 4, timestamp: "d", message: user("summary"), firstKeptSeq: null, firstKeptUserSeq: 3 },
+      { type: "compaction", seq: 4, timestamp: "d", summary: "summary", firstKeptSeq: null, firstKeptUserSeq: 3 },
     ];
     expect(projectMessages(events)).toEqual([user("recent")]);
     expect(projectSummary(events)).toBe("summary");

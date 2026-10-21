@@ -21,10 +21,8 @@ export type SessionEvent =
   | (SessionEventBase & {
       /** 语义压缩：把 firstKeptSeq 之前的历史摘要成 summary；firstKeptSeq/firstKeptUserSeq 之后仍保留。 */
       type: "compaction";
-      /** 摘要纯文本（新格式）。 */
-      summary?: string;
-      /** 旧格式：摘要作为一条假 user 消息。仅向后兼容读取，新事件不再写。 */
-      message?: ChatMessage;
+      /** 摘要纯文本。 */
+      summary: string;
       firstKeptSeq: number | null;
       /** user 消息保留边界：缺省或 null = 全部保留（旧行为）；否则只保留 seq >= 该值的 user。 */
       firstKeptUserSeq?: number | null;
@@ -88,12 +86,6 @@ function isAssistantMessageEvent(event: SessionEvent): boolean {
   return isMessageEvent(event) && event.message.role === "assistant";
 }
 
-/** 事件若携带 message 则返回之（message 事件必有；compaction 仅在旧格式下才有）；否则 null。 */
-function eventMessage(event: SessionEvent): ChatMessage | null {
-  if (event.type === "message") return event.message;
-  if (event.type === "compaction") return event.message ?? null;
-  return null;
-}
 
 /** 压缩时判定一条投影消息是否保留：user 按 firstKeptUserSeq 保留（null = 全部保留）；其余按 firstKeptSeq 阈值保留。 */
 function isKeptAfterCompaction(
@@ -107,10 +99,6 @@ function isKeptAfterCompaction(
   return firstKeptSeq !== null && item.sourceSeq >= firstKeptSeq;
 }
 
-/** 读取 compaction 事件的摘要文本：新格式 summary 优先，旧格式 message.content 兜底。 */
-function compactionSummary(event: Extract<SessionEvent, { type: "compaction" }>): string {
-  return event.summary ?? event.message?.content ?? "";
-}
 
 /** 投影结果：对话消息序列 + 最新摘要。 */
 interface Projection {
@@ -146,7 +134,7 @@ function projectEvents(events: readonly SessionEvent[]): Projection {
       const firstKeptUserSeq = event.firstKeptUserSeq ?? null;
       const kept = projected.filter((item) => isKeptAfterCompaction(item, firstKeptSeq, firstKeptUserSeq));
       projected = kept;
-      latestSummary = compactionSummary(event) || null;
+      latestSummary = event.summary || null;
     } else if (event.type === "messageCancelled") {
       projected = projected.map((item) =>
         item.sourceSeq === event.target
@@ -195,10 +183,9 @@ export class Transcript {
       this.system = null;
     }
 
-    this.rawEvents = (options.events ?? []).map((event) => {
-      const message = eventMessage(event);
-      return message !== null ? { ...event, message: prepareMessage(message) } : event;
-    });
+    this.rawEvents = (options.events ?? []).map((event) =>
+      event.type === "message" ? { ...event, message: prepareMessage(event.message) } : event,
+    );
     let previousSeq = 0;
     for (const event of this.rawEvents) {
       if (!Number.isInteger(event.seq) || event.seq <= previousSeq) {

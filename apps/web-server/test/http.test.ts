@@ -129,10 +129,12 @@ describe("http 路由", () => {
     mkdirSync(sessionsDir, { recursive: true });
     writeFileSync(
       path.join(sessionsDir, "session_preview.jsonl"),
-      [
-        JSON.stringify({ role: "system", content: "system" }),
-        JSON.stringify({ role: "user", content: "first user prompt" }),
-      ].join("\n") + "\n",
+      JSON.stringify({
+        type: "message",
+        seq: 1,
+        timestamp: new Date(0).toISOString(),
+        message: { role: "user", content: "first user prompt" },
+      }) + "\n",
       "utf8",
     );
     const { server, url } = await listen(context);
@@ -264,7 +266,15 @@ describe("http 路由", () => {
     servers.push(server);
     const sessionsDir = path.join(tmpDir, ".sessions");
     mkdirSync(sessionsDir, { recursive: true });
-    writeFileSync(path.join(sessionsDir, "session_test.jsonl"), JSON.stringify({ role: "user", content: "hi" }) + "\n");
+    writeFileSync(
+      path.join(sessionsDir, "session_test.jsonl"),
+      JSON.stringify({
+        type: "message",
+        seq: 1,
+        timestamp: new Date(0).toISOString(),
+        message: { role: "user", content: "hi" },
+      }) + "\n",
+    );
     const res = await fetch(`${url}/api/sessions/session_test.jsonl`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { messages: Array<{ content: string | null }> };

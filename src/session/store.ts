@@ -157,24 +157,12 @@ export class SessionStore {
     let seq = 0;
     for (let index = startIndex; index < parsed.length; index++) {
       const entry = parsed[index];
-      if (isSessionEvent(entry)) {
-        if (!Number.isInteger(entry.seq) || entry.seq <= seq) {
-          throw new Error(`Session event seq must be increasing: ${entry.seq}`);
-        }
-        events.push(entry);
-        seq = entry.seq;
-        continue;
+      if (!isSessionEvent(entry)) continue;
+      if (!Number.isInteger(entry.seq) || entry.seq <= seq) {
+        throw new Error(`Session event seq must be increasing: ${entry.seq}`);
       }
-      // 无 header 的裸消息行是 v0 legacy 格式。
-      if (header === null && isRecord(entry) && entry["type"] === undefined) {
-        seq += 1;
-        events.push({
-          type: "message",
-          seq,
-          timestamp: new Date(0).toISOString(),
-          message: entry as unknown as ChatMessage,
-        });
-      }
+      events.push(entry);
+      seq = entry.seq;
     }
     return { header, events };
   }

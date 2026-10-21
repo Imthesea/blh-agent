@@ -53,13 +53,9 @@ async function readFirstUser(file: string): Promise<string | null> {
         const entry = JSON.parse(line) as {
           type?: unknown;
           message?: { role?: unknown; content?: unknown };
-          role?: unknown;
-          content?: unknown;
         };
-        // 新事件格式：message 事件把消息嵌在 .message 里；旧格式是裸消息行。
-        const message = entry.type === "message" && entry.message ? entry.message : entry;
-        if (message.role === "user") {
-          return typeof message.content === "string" ? message.content : "";
+        if (entry.type === "message" && entry.message?.role === "user") {
+          return typeof entry.message.content === "string" ? entry.message.content : "";
         }
       } catch {
       }
