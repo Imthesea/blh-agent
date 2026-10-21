@@ -163,7 +163,6 @@ describe("TeammateRuntime", () => {
       .filter((file) => file.endsWith(".jsonl"))
       .map((file) => path.join(tmpDir, ".blh", "traces", file));
     const events = traceFiles.flatMap((file) => readJsonl(file));
-    const usage = readJsonl(path.join(tmpDir, ".blh", "usage.jsonl"));
 
     expect(events.map((event) => event["type"])).toEqual([
       "turn_start",
@@ -171,8 +170,9 @@ describe("TeammateRuntime", () => {
       "turn_end",
     ]);
     expect(events.every((event) => event["sid"] === "teammate:bob")).toBe(true);
-    expect(usage).toEqual([
-      expect.objectContaining({ sid: "teammate:bob", in: 13, out: 5 }),
+    const llmEvents = events.filter((event) => event["type"] === "llm");
+    expect(llmEvents).toEqual([
+      expect.objectContaining({ sid: "teammate:bob", usage: { promptTokens: 13, completionTokens: 5 } }),
     ]);
   });
 

@@ -4,7 +4,6 @@ import { createLogger } from "@blh/logger";
 import { summarize } from "../contracts/text.js";
 import type { ChatUsage } from "../contracts/types.js";
 import { costFor } from "./pricing.js";
-import type { UsageRecord } from "./types.js";
 
 const log = createLogger("tracer");
 
@@ -23,6 +22,9 @@ interface LlmPayload {
   usage?: ChatUsage | null;
   [key: string]: unknown;
 }
+
+/** 跨实例去重：未知模型只告警一次，避免每个 scoped tracer 重复刷日志。 */
+const warnedModels = new Set<string>();
 
 /**
  * 追加式 JSONL tracer。所有 I/O 失败静默（warn 一次），绝不打断主流程。
@@ -97,19 +99,16 @@ export class Tracer {
     }
   }
 
+  /** 累加本回合成本；不写 usage.jsonl（trace 的 llm.usage 是唯一 token 源）。 */
   private recordUsage(p: LlmPayload): void {
     if (p.usage == null) return;
     const cost = costFor(p.model, p.usage.promptTokens, p.usage.completionTokens);
-    if (cost !== null) this.costUsd += cost;
-    const rec: UsageRecord = {
-      ts: Date.now(),
-      sid: this.sid,
-      provider: p.provider,
-      model: p.model,
-      in: p.usage.promptTokens,
-      out: p.usage.completionTokens,
-    };
-    this.writeLine(path.join(this.workdir, ".blh", "usage.jsonl"), JSON.stringify(rec) + "\n");
+    if (cost !== null) {
+      this.costUsd += cost;
+    } else if (!warnedModels.has(p.model)) {
+      warnedModels.add(p.model);
+      log.warn("unknown model price, cost will be 0", { model: p.model });
+    }
   }
 
   private dayFile(): string {

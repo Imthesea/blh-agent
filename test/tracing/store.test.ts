@@ -12,10 +12,6 @@ function setup(): { dir: string; file: string } {
   return { dir, file: path.join(traces, `${localDate()}.jsonl`) };
 }
 
-function usageFile(dir: string): string {
-  return path.join(dir, ".blh", "usage.jsonl");
-}
-
 function appendLines(file: string, lines: string[]): void {
   fs.appendFileSync(file, lines.join("\n") + "\n");
 }
@@ -64,14 +60,12 @@ describe("events 增量读", () => {
 
   it("半行暂存，补全后再返回", () => {
     const { dir, file } = setup();
-    // 写入一行完整 + 半行（无尾换行）
     fs.writeFileSync(file, TURN[0]! + "\n" + TURN[1]!.slice(0, 30));
     const s = new TraceStore(dir);
     const first = s.events(localDate(), 0);
     expect(first.events.length).toBe(1);
     expect(first.nextCursor).toBe(1);
 
-    // 补全第二行
     fs.appendFileSync(file, TURN[1]!.slice(30) + "\n");
     const second = s.events(localDate(), 1);
     expect(second.events.length).toBe(1);
@@ -120,7 +114,6 @@ describe("文件重置", () => {
     fs.rmSync(file);
     expect(s.events(localDate(), 0)).toEqual({ events: [], nextCursor: 0 });
 
-    // 重建一个更长的文件，不能从旧 offset 中间读
     appendLines(file, TURN);
     const r = s.events(localDate(), 0);
     expect(r.events.length).toBe(4);
@@ -155,28 +148,83 @@ describe("turns 折叠缓存", () => {
   });
 });
 
-describe("usage 增量聚合", () => {
-  const REC1 = JSON.stringify({ ts: 1250, sid: "s1", provider: "deepseek", model: "deepseek-chat", in: 100, out: 50 });
-  const REC2 = JSON.stringify({ ts: 1300, sid: "s1", provider: "deepseek", model: "qwen-plus", in: 30, out: 10 });
+describe("usage 从 llm 事件聚合", () => {
+  function llm(ts: number, provider: string, model: string, inTokens: number, outTokens: number): string {
+    return JSON.stringify({
+      ts,
+      type: "llm",
+      sid: "s1",
+      turn: 1,
+      provider,
+      model,
+      status: "ok",
+      latency_ms: 10,
+      usage: { promptTokens: inTokens, completionTokens: outTokens },
+    });
+  }
 
-  it("追加记录只累加新增部分，不翻倍", () => {
-    const { dir } = setup();
-    appendLines(usageFile(dir), [REC1]);
+  it("追加 llm 事件只累加新增部分，不翻倍", () => {
+    const { dir, file } = setup();
+    appendLines(file, [llm(1000, "deepseek", "deepseek-flash", 100, 50)]);
     const s = new TraceStore(dir);
     expect(s.usage().total.in).toBe(100);
 
-    appendLines(usageFile(dir), [REC2]);
+    appendLines(file, [llm(2000, "qwen", "qwen-plus", 30, 10)]);
     const u = s.usage();
     expect(u.total.in).toBe(130);
     expect(u.total.out).toBe(60);
-    expect(Object.keys(u.byModel).sort()).toEqual(["deepseek-chat", "qwen-plus"]);
+    expect(Object.keys(u.byModel).sort()).toEqual(["deepseek-flash", "qwen-plus"]);
   });
 
-  it("usage 文件不存在返回全零", () => {
+  it("trace 文件不存在返回全零", () => {
     const { dir } = setup();
     const s = new TraceStore(dir);
+    expect(s.usage().total).toEqual({ in: 0, out: 0, costUsd: 0 });
+  });
+
+  it("跳过 error llm 与无 usage 的 llm", () => {
+    const { dir, file } = setup();
+    appendLines(file, [
+      llm(1000, "deepseek", "deepseek-flash", 100, 50),
+      JSON.stringify({ ts: 1100, type: "llm", sid: "s1", turn: 1, provider: "deepseek", model: "deepseek-flash", status: "error", latency_ms: 10, usage: null }),
+      JSON.stringify({ ts: 1200, type: "llm", sid: "s1", turn: 1, provider: "deepseek", model: "deepseek-flash", status: "ok", latency_ms: 10 }),
+    ]);
+    const s = new TraceStore(dir);
+    expect(s.usage().total.in).toBe(100);
+  });
+
+  it("多天聚合", () => {
+    const { dir } = setup();
+    const traces = path.join(dir, ".blh", "traces");
+    appendLines(path.join(traces, "2026-09-26.jsonl"), [llm(Date.parse("2026-09-26T10:00:00"), "deepseek", "deepseek-flash", 100, 10)]);
+    appendLines(path.join(traces, "2026-09-27.jsonl"), [llm(Date.parse("2026-09-27T10:00:00"), "deepseek", "deepseek-flash", 200, 20)]);
+    const s = new TraceStore(dir);
     const u = s.usage();
-    expect(u.total).toEqual({ in: 0, out: 0, costUsd: 0 });
+    expect(u.total.in).toBe(300);
+    expect(Object.keys(u.byDay).sort()).toEqual(["2026-09-26", "2026-09-27"]);
+  });
+
+  it("删除某天文件后不再计入", () => {
+    const { dir } = setup();
+    const traces = path.join(dir, ".blh", "traces");
+    const f26 = path.join(traces, "2026-09-26.jsonl");
+    const f27 = path.join(traces, "2026-09-27.jsonl");
+    appendLines(f26, [llm(1000, "deepseek", "deepseek-flash", 100, 10)]);
+    appendLines(f27, [llm(1000, "deepseek", "deepseek-flash", 200, 20)]);
+    const s = new TraceStore(dir);
+    expect(s.usage().total.in).toBe(300);
+    fs.rmSync(f26);
+    expect(s.usage().total.in).toBe(200);
+  });
+
+  it("增量读：无新增时不重复读字节", () => {
+    const { dir, file } = setup();
+    appendLines(file, [llm(1000, "deepseek", "deepseek-flash", 100, 50)]);
+    const s = new TraceStore(dir);
+    s.usage();
+    const before = s.stats().bytesRead;
+    s.usage();
+    expect(s.stats().bytesRead).toBe(before);
   });
 });
 
@@ -191,7 +239,6 @@ describe("多日期缓存", () => {
     expect(s.events("2026-09-27", 0).nextCursor).toBe(2);
     appendLines(path.join(traces, "2026-09-26.jsonl"), [TURN[1]!]);
     expect(s.events("2026-09-26", 1).nextCursor).toBe(2);
-    // 另一天不受影响
     expect(s.events("2026-09-27", 2)).toEqual({ events: [], nextCursor: 2 });
   });
 
@@ -206,7 +253,6 @@ describe("多日期缓存", () => {
     }
     const s = new TraceStore(dir);
     for (const d of dates) s.events(d, 0);
-    // 第 1 天已被淘汰，再访问重读，结果不变
     const r = s.events(dates[0]!, 0);
     expect(r.events.length).toBe(1);
     expect(r.nextCursor).toBe(1);

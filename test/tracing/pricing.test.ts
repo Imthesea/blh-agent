@@ -1,17 +1,28 @@
 import { describe, expect, it } from "vitest";
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
-import { costFor, usageSummary } from "../../src/tracing/pricing.js";
+import {
+  costFor,
+  createUsageAccumulator,
+  mergeUsageSummaries,
+  type UsageLine,
+} from "../../src/tracing/pricing.js";
 
 describe("costFor", () => {
-  it("命中已知模型（大小写不敏感）", () => {
-    expect(costFor("deepseek-chat", 1_000_000, 1_000_000)).toBeCloseTo(0.27 + 1.1, 6);
-    expect(costFor("DeepSeek-Chat", 1_000_000, 0)).toBeCloseTo(0.27, 6);
+  it("deepseek-flash 使用 cache-miss + off-peak 基础价", () => {
+    expect(costFor("deepseek-flash", 1_000_000, 1_000_000)).toBeCloseTo(0.15 + 0.6, 6);
+    expect(costFor("deepseek-flash", 1_000_000, 0)).toBeCloseTo(0.15, 6);
   });
 
-  it("长模式名优先（deepseek-reasoner 不被 deepseek-chat 抢先命中）", () => {
-    expect(costFor("deepseek-reasoner", 1_000_000, 1_000_000)).toBeCloseTo(0.55 + 2.19, 6);
+  it("大小写不敏感", () => {
+    expect(costFor("DeepSeek-Flash", 1_000_000, 0)).toBeCloseTo(0.15, 6);
+  });
+
+  it("legacy 别名 deepseek-chat / deepseek-reasoner 按 Flash 计费", () => {
+    expect(costFor("deepseek-chat", 1_000_000, 1_000_000)).toBeCloseTo(0.75, 6);
+    expect(costFor("deepseek-reasoner", 1_000_000, 0)).toBeCloseTo(0.15, 6);
+  });
+
+  it("deepseek-v4-pro 单独计价", () => {
+    expect(costFor("deepseek-v4-pro", 1_000_000, 1_000_000)).toBeCloseTo(0.66 + 1.98, 6);
   });
 
   it("未知模型返回 null", () => {
@@ -19,43 +30,49 @@ describe("costFor", () => {
   });
 });
 
-describe("usageSummary", () => {
-  function writeLedger(lines: unknown[]): string {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "blh-pricing-"));
-    const blh = path.join(dir, ".blh");
-    fs.mkdirSync(blh, { recursive: true });
-    fs.writeFileSync(
-      path.join(blh, "usage.jsonl"),
-      lines.map((l) => (typeof l === "string" ? l : JSON.stringify(l))).join("\n") + "\n",
-    );
-    return dir;
-  }
+describe("createUsageAccumulator", () => {
+  const rec = (o: Partial<UsageLine> & { in: number; out: number }): UsageLine => ({
+    ts: Date.parse("2026-09-27T10:00:00"),
+    provider: "deepseek",
+    model: "deepseek-flash",
+    ...o,
+  });
 
-  it("账本不存在时返回空聚合", () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "blh-pricing-"));
-    const s = usageSummary(dir);
+  it("空累加器返回零值", () => {
+    const s = createUsageAccumulator().summary();
     expect(s.total).toEqual({ in: 0, out: 0, costUsd: 0 });
     expect(s.byDay).toEqual({});
     expect(s.byProvider).toEqual({});
     expect(s.byModel).toEqual({});
   });
 
-  it("聚合 total/byDay/byProvider/byModel 并计算成本，坏行跳过", () => {
-    const dir = writeLedger([
-      { ts: Date.parse("2026-09-27T10:00:00"), sid: "a", provider: "deepseek", model: "deepseek-chat", in: 1000, out: 2000 },
-      { ts: Date.parse("2026-09-27T11:00:00"), sid: "a", provider: "deepseek", model: "deepseek-chat", in: 500, out: 500 },
-      { ts: Date.parse("2026-09-26T09:00:00"), sid: "b", provider: "unknown", model: "mystery", in: 100, out: 100 },
-      "{bad json",
-    ]);
-    const s = usageSummary(dir);
+  it("聚合 total/byDay/byProvider/byModel 并计算成本", () => {
+    const acc = createUsageAccumulator();
+    acc.add(rec({ ts: Date.parse("2026-09-27T10:00:00"), in: 1000, out: 2000 }));
+    acc.add(rec({ ts: Date.parse("2026-09-27T11:00:00"), in: 500, out: 500 }));
+    acc.add(rec({ ts: Date.parse("2026-09-26T09:00:00"), provider: "unknown", model: "mystery", in: 100, out: 100 }));
+    const s = acc.summary();
     expect(s.total.in).toBe(1600);
     expect(s.total.out).toBe(2600);
-    // deepseek-chat: 1500*0.27/1M + 2500*1.10/1M = 0.000405 + 0.00275
-    expect(s.total.costUsd).toBeCloseTo(0.000405 + 0.00275, 9);
-    const day = Object.keys(s.byDay).sort();
-    expect(day.length).toBe(2);
-    expect(s.byModel["deepseek-chat"]!.in).toBe(1500);
+    // deepseek-flash: 1500*0.15/1M + 2500*0.6/1M = 0.000225 + 0.0015
+    expect(s.total.costUsd).toBeCloseTo(0.000225 + 0.0015, 9);
+    expect(Object.keys(s.byDay).sort()).toEqual(["2026-09-26", "2026-09-27"]);
+    expect(s.byModel["deepseek-flash"]!.in).toBe(1500);
     expect(s.byModel["mystery"]!.costUsd).toBe(0);
     expect(s.byProvider["unknown"]!.in).toBe(100);
+  });
+});
+
+describe("mergeUsageSummaries", () => {
+  it("合并多天聚合，byDay 保持分天", () => {
+    const a = createUsageAccumulator();
+    a.add({ ts: Date.parse("2026-09-26T10:00:00"), provider: "deepseek", model: "deepseek-flash", in: 100, out: 10 });
+    const b = createUsageAccumulator();
+    b.add({ ts: Date.parse("2026-09-27T10:00:00"), provider: "deepseek", model: "deepseek-flash", in: 200, out: 20 });
+    const merged = mergeUsageSummaries([a.summary(), b.summary()]);
+    expect(merged.total.in).toBe(300);
+    expect(merged.total.out).toBe(30);
+    expect(Object.keys(merged.byDay).sort()).toEqual(["2026-09-26", "2026-09-27"]);
+    expect(merged.byModel["deepseek-flash"]!.in).toBe(300);
   });
 });

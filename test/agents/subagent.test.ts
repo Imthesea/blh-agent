@@ -105,12 +105,6 @@ describe("SubagentRunner", () => {
           .filter(Boolean)
           .map((line) => JSON.parse(line) as Record<string, unknown>),
       );
-    const usageFile = path.join(tmpDir, ".blh", "usage.jsonl");
-    const usage = readFileSync(usageFile, "utf8")
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => JSON.parse(line) as Record<string, unknown>);
-
     expect(events.map((event) => event["type"])).toEqual([
       "subagent",
       "turn_start",
@@ -119,8 +113,9 @@ describe("SubagentRunner", () => {
       "subagent",
     ]);
     expect(events.every((event) => event["sid"] === "subagent")).toBe(true);
-    expect(usage).toEqual([
-      expect.objectContaining({ sid: "subagent", in: 11, out: 7 }),
+    const llmEvents = events.filter((event) => event["type"] === "llm");
+    expect(llmEvents).toEqual([
+      expect.objectContaining({ sid: "subagent", usage: { promptTokens: 11, completionTokens: 7 } }),
     ]);
   });
 

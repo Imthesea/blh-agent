@@ -5,22 +5,19 @@ import * as path from "node:path";
 import { createTraceModule } from "../../src/tracing/module.js";
 import { localDate } from "../../src/tracing/tracer.js";
 
-function setup(traceLines: string[], ledgerLines: string[] = []): string {
+function setup(traceLines: string[]): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "blh-module-"));
   const traces = path.join(dir, ".blh", "traces");
   fs.mkdirSync(traces, { recursive: true });
   if (traceLines.length > 0) {
     fs.writeFileSync(path.join(traces, `${localDate()}.jsonl`), traceLines.join("\n") + "\n");
   }
-  if (ledgerLines.length > 0) {
-    fs.writeFileSync(path.join(dir, ".blh", "usage.jsonl"), ledgerLines.join("\n") + "\n");
-  }
   return dir;
 }
 
 const TURN_EVENTS = [
   JSON.stringify({ ts: 1000, type: "turn_start", sid: "s1", turn: 1, user_message: "hi" }),
-  JSON.stringify({ ts: 1100, type: "llm", sid: "s1", turn: 1, provider: "deepseek", model: "deepseek-chat", status: "ok", latency_ms: 50 }),
+  JSON.stringify({ ts: 1100, type: "llm", sid: "s1", turn: 1, provider: "deepseek", model: "deepseek-flash", status: "ok", latency_ms: 50, usage: { promptTokens: 100, completionTokens: 50 } }),
   JSON.stringify({ ts: 1200, type: "tool", sid: "s1", turn: 1, tool: "bash", args_summary: "ls", latency_ms: 10, status: "ok", output_summary: "x" }),
   JSON.stringify({ ts: 1300, type: "turn_end", sid: "s1", turn: 1, latency_ms: 300, iterations: 1, tools_used: 1, cost_usd: 0.001 }),
 ];
@@ -102,19 +99,18 @@ describe("turns", () => {
 });
 
 describe("overview", () => {
-  it("聚合账本与当日 turn 统计", () => {
-    const dir = setup(TURN_EVENTS, [
-      JSON.stringify({ ts: 1250, sid: "s1", provider: "deepseek", model: "deepseek-chat", in: 100, out: 50 }),
-    ]);
+  it("usage 从 trace llm 事件聚合，并统计当日 turn", () => {
+    const dir = setup(TURN_EVENTS);
     const m = createTraceModule(dir) as {
       overview(): {
-        usage: { total: { in: number } };
+        usage: { total: { in: number; costUsd: number } };
         today: { turns: number; tools: number; avgLatencyMs: number };
         recentTurns: Array<{ userMessage: string }>;
       };
     };
     const o = m.overview();
     expect(o.usage.total.in).toBe(100);
+    expect(o.usage.total.costUsd).toBeCloseTo((100 * 0.15 + 50 * 0.6) / 1_000_000, 12);
     expect(o.today.turns).toBe(1);
     expect(o.today.tools).toBe(1);
     expect(o.today.avgLatencyMs).toBe(300);

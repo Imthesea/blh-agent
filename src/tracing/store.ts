@@ -1,12 +1,38 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { foldEvents, type FoldedTurn } from "./fold.js";
-import { createUsageAccumulator, type UsageAccumulator, type UsageSummary } from "./pricing.js";
+import {
+  createUsageAccumulator,
+  mergeUsageSummaries,
+  type UsageAccumulator,
+  type UsageSummary,
+} from "./pricing.js";
 import { Tracer } from "./tracer.js";
-import type { TraceEvent, UsageRecord } from "./types.js";
+import type { TraceEvent } from "./types.js";
 
 /** 最多缓存几天的 trace（LRU，超出淘汰最久未访问的）。 */
 const MAX_DAYS = 8;
+
+const TRACE_FILE_RE = /^(\d{4}-\d{2}-\d{2})\.jsonl$/;
+
+/** 列出所有 trace 日期文件（倒序，过滤非法文件名）。 */
+export function listTraceDates(workdir: string): string[] {
+  let names: string[];
+  try {
+    names = fs.readdirSync(Tracer.tracesDir(workdir));
+  } catch {
+    return [];
+  }
+  return names
+    .map((n) => TRACE_FILE_RE.exec(n)?.[1])
+    .filter((d): d is string => d !== undefined)
+    .sort()
+    .reverse();
+}
+
+function traceFile(workdir: string, date: string): string {
+  return path.join(Tracer.tracesDir(workdir), `${date}.jsonl`);
+}
 
 /**
  * 单文件增量读取（tail -f 模式）：记住读到的字节偏移，每次 sync 只读新增部分。
@@ -90,14 +116,12 @@ interface DayCache {
  */
 export class TraceStore {
   private readonly days = new Map<string, DayCache>();
-  private readonly usageTail: JsonlTail;
-  private usageAcc: UsageAccumulator;
+  /** usage 聚合按天独立增量读，不受 events/turns 的 8 天 LRU 影响。 */
+  private readonly usageTails = new Map<string, JsonlTail>();
+  private readonly usageDays = new Map<string, UsageAccumulator>();
   private foldCount = 0;
 
-  constructor(private readonly workdir: string) {
-    this.usageTail = new JsonlTail(path.join(workdir, ".blh", "usage.jsonl"));
-    this.usageAcc = createUsageAccumulator();
-  }
+  constructor(private readonly workdir: string) {}
 
   /** cursor = 非空行索引（坏行占位计入）；越界返回空 + 当前 total。 */
   events(date: string, cursor: number): { events: TraceEvent[]; nextCursor: number } {
@@ -122,28 +146,61 @@ export class TraceStore {
     return c.turns;
   }
 
-  /** usage.jsonl 增量聚合；每条记录只累加一次。 */
+  /** 从各 trace 文件的 llm 事件聚合 usage；按天增量读、按天累加。 */
   usage(): UsageSummary {
-    const { lines, reset } = this.usageTail.sync();
-    if (reset) {
-      // 文件被截断/重建：已累加值作废，随从头读重新累加
-      this.usageAcc = createUsageAccumulator();
-    }
-    for (const line of lines) {
-      try {
-        this.usageAcc.add(JSON.parse(line) as UsageRecord);
-      } catch {
-        // 坏行跳过
+    const dates = listTraceDates(this.workdir);
+    // 剔除已删除日期文件的旧累积，避免幽灵数据残留
+    const live = new Set(dates);
+    for (const d of [...this.usageTails.keys()]) {
+      if (!live.has(d)) {
+        this.usageTails.delete(d);
+        this.usageDays.delete(d);
       }
     }
-    return this.usageAcc.summary();
+    for (const date of dates) {
+      this.syncUsageDay(date);
+    }
+    return mergeUsageSummaries([...this.usageDays.values()].map((a) => a.summary()));
   }
 
   /** 测试与诊断计数。 */
   stats(): { bytesRead: number; folds: number } {
-    let bytesRead = this.usageTail.bytesRead;
+    let bytesRead = 0;
+    for (const t of this.usageTails.values()) bytesRead += t.bytesRead;
     for (const c of this.days.values()) bytesRead += c.tail.bytesRead;
     return { bytesRead, folds: this.foldCount };
+  }
+
+  private syncUsageDay(date: string): void {
+    let tail = this.usageTails.get(date);
+    if (tail === undefined) {
+      tail = new JsonlTail(traceFile(this.workdir, date));
+      this.usageTails.set(date, tail);
+    }
+    const { lines, reset } = tail.sync();
+    let acc = this.usageDays.get(date);
+    if (reset || acc === undefined) {
+      // 文件被截断/重建：该天累积作废，从头重算
+      acc = createUsageAccumulator();
+      this.usageDays.set(date, acc);
+    }
+    for (const line of lines) {
+      try {
+        const e = JSON.parse(line) as TraceEvent;
+        if (e.type !== "llm" || e.status === "error") continue;
+        const u = e.usage as { promptTokens?: number; completionTokens?: number } | null | undefined;
+        if (u === null || u === undefined) continue;
+        acc.add({
+          ts: e.ts,
+          provider: typeof e.provider === "string" ? e.provider : "",
+          model: typeof e.model === "string" ? e.model : "",
+          in: u.promptTokens ?? 0,
+          out: u.completionTokens ?? 0,
+        });
+      } catch {
+        // 坏行跳过
+      }
+    }
   }
 
   private syncDay(date: string): DayCache {
@@ -175,7 +232,7 @@ export class TraceStore {
       return existing;
     }
     const cache: DayCache = {
-      tail: new JsonlTail(path.join(Tracer.tracesDir(this.workdir), `${date}.jsonl`)),
+      tail: new JsonlTail(traceFile(this.workdir, date)),
       parsed: [],
       turns: null,
     };

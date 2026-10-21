@@ -1,8 +1,7 @@
-import * as fs from "node:fs";
 import type { FoldedTurn } from "./fold.js";
 import type { UsageSummary } from "./pricing.js";
-import { TraceStore } from "./store.js";
-import { Tracer, localDate } from "./tracer.js";
+import { TraceStore, listTraceDates } from "./store.js";
+import { localDate } from "./tracer.js";
 import type { TraceEvent } from "./types.js";
 
 export interface TraceOverview {
@@ -16,22 +15,6 @@ export interface TraceModule {
   turns(opts?: { date?: string; sid?: string; limit?: number }): FoldedTurn[];
   events(cursor: number, date?: string): { events: TraceEvent[]; nextCursor: number };
   files(): string[];
-}
-
-const FILE_RE = /^(\d{4}-\d{2}-\d{2})\.jsonl$/;
-
-function listDates(workdir: string): string[] {
-  let names: string[];
-  try {
-    names = fs.readdirSync(Tracer.tracesDir(workdir));
-  } catch {
-    return [];
-  }
-  return names
-    .map((n) => FILE_RE.exec(n)?.[1])
-    .filter((d): d is string => d !== undefined)
-    .sort()
-    .reverse();
 }
 
 export function createTraceModule(workdir: string): TraceModule {
@@ -65,7 +48,7 @@ export function createTraceModule(workdir: string): TraceModule {
     },
 
     files(): string[] {
-      return listDates(workdir);
+      return listTraceDates(workdir);
     },
   };
 }

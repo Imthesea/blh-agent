@@ -18,16 +18,6 @@ function readDay(dir: string): Array<Record<string, unknown>> {
     .map((l) => JSON.parse(l) as Record<string, unknown>);
 }
 
-function readLedger(dir: string): Array<Record<string, unknown>> {
-  const file = path.join(dir, ".blh", "usage.jsonl");
-  if (!fs.existsSync(file)) return [];
-  return fs
-    .readFileSync(file, "utf-8")
-    .split("\n")
-    .filter((l) => l.trim() !== "")
-    .map((l) => JSON.parse(l) as Record<string, unknown>);
-}
-
 describe("summarize", () => {
   it("短文本原样返回", () => {
     expect(summarize("hello")).toBe("hello");
@@ -45,8 +35,8 @@ describe("Tracer", () => {
     const { tracer, dir } = makeTracer();
     tracer.setSid("sess-1");
     tracer.beginTurn("帮我修个 bug");
-    tracer.event("llm", { provider: "deepseek", model: "deepseek-chat", stream: true, status: "ok", latency_ms: 100 });
-    tracer.event("llm", { provider: "deepseek", model: "deepseek-chat", stream: true, status: "ok", latency_ms: 80, usage: { promptTokens: 10, completionTokens: 5 } });
+    tracer.event("llm", { provider: "deepseek", model: "deepseek-flash", stream: true, status: "ok", latency_ms: 100 });
+    tracer.event("llm", { provider: "deepseek", model: "deepseek-flash", stream: true, status: "ok", latency_ms: 80, usage: { promptTokens: 10, completionTokens: 5 } });
     tracer.event("tool", { tool: "bash", args_summary: "ls", latency_ms: 20, status: "ok", output_summary: "…" });
     tracer.endTurn();
 
@@ -62,20 +52,22 @@ describe("Tracer", () => {
     expect(end["iterations"]).toBe(2);
     expect(end["tools_used"]).toBe(1);
     expect(typeof end["latency_ms"]).toBe("number");
-    expect(end["cost_usd"]).toBeCloseTo((10 * 0.27 + 5 * 1.1) / 1_000_000, 12);
+    expect(end["cost_usd"]).toBeCloseTo((10 * 0.15 + 5 * 0.6) / 1_000_000, 12);
   });
 
-  it("usage 账本只记录带 usage 的 llm 事件", () => {
+  it("带 usage 的 llm 事件原样写入 trace，不再写 usage.jsonl", () => {
     const { tracer, dir } = makeTracer();
     tracer.beginTurn("hi");
-    tracer.event("llm", { provider: "deepseek", model: "deepseek-chat", status: "ok", latency_ms: 10 });
-    tracer.event("llm", { provider: "deepseek", model: "deepseek-chat", status: "ok", latency_ms: 10, usage: { promptTokens: 3, completionTokens: 4 } });
+    tracer.event("llm", { provider: "deepseek", model: "deepseek-flash", status: "ok", latency_ms: 10 });
+    tracer.event("llm", { provider: "deepseek", model: "deepseek-flash", status: "ok", latency_ms: 10, usage: { promptTokens: 3, completionTokens: 4 } });
     tracer.event("tool", { tool: "read", args_summary: "a", latency_ms: 1, status: "ok", output_summary: "b" });
     tracer.endTurn();
 
-    const ledger = readLedger(dir);
-    expect(ledger.length).toBe(1);
-    expect(ledger[0]).toMatchObject({ provider: "deepseek", model: "deepseek-chat", in: 3, out: 4 });
+    const events = readDay(dir);
+    const llmWithUsage = events.filter((e) => e["type"] === "llm" && e["usage"] !== undefined);
+    expect(llmWithUsage.length).toBe(1);
+    expect(llmWithUsage[0]!["usage"]).toEqual({ promptTokens: 3, completionTokens: 4 });
+    expect(fs.existsSync(path.join(dir, ".blh", "usage.jsonl"))).toBe(false);
   });
 
   it("cancelTurn 记录取消原因", () => {
