@@ -97,6 +97,8 @@ function fromAnthropicMessage(message: Anthropic.Message): ChatMessage {
     role: "assistant",
     content: text || null,
     ...(toolCalls.length ? { tool_calls: toolCalls } : {}),
+    // 仅截断原因才上报（"end_turn"/"tool_use" 等正常原因不携带该字段）。
+    ...(message.stop_reason === "max_tokens" ? { finishReason: "max_tokens" } : {}),
   };
 }
 
@@ -221,6 +223,7 @@ export class AnthropicProvider implements ChatProvider {
     let text = "";
     const calls = new Map<number, { id: string; name: string; partialJson: string }>();
     let usage: ChatUsage | undefined;
+    let finishReason: string | null = null;
 
     for await (const event of stream) {
       if (event.type === "content_block_start") {
@@ -237,8 +240,13 @@ export class AnthropicProvider implements ChatProvider {
           const acc = calls.get(event.index);
           if (acc) acc.partialJson += delta.partial_json;
         }
-      } else if (event.type === "message_delta" && event.usage) {
-        usage = { promptTokens: event.usage.input_tokens ?? 0, completionTokens: event.usage.output_tokens };
+      } else if (event.type === "message_delta") {
+        if (event.usage) {
+          usage = { promptTokens: event.usage.input_tokens ?? 0, completionTokens: event.usage.output_tokens };
+        }
+        if (event.delta?.stop_reason) {
+          finishReason = event.delta.stop_reason;
+        }
       }
     }
 
@@ -251,6 +259,7 @@ export class AnthropicProvider implements ChatProvider {
       role: "assistant",
       content: text || null,
       ...(toolCalls.length ? { tool_calls: toolCalls } : {}),
+      ...(finishReason === "max_tokens" ? { finishReason: "max_tokens" } : {}),
     };
     yield { type: "done", message, ...(usage ? { usage } : {}) };
   }

@@ -41,8 +41,8 @@ export interface PreparedContext {
 }
 
 export interface CompactionPort {
-  /** 调模型前主动压缩：优先本地操作（挪工具结果、砍中间），实在压不下才做整体摘要。 */
-  prepare(messages: readonly ChatMessage[], activeRequest: string): Promise<PreparedContext>;
+  /** 调模型前主动压缩：优先本地操作（挪工具结果、砍中间），实在压不下才做整体摘要。budgetTokens 为原始估算尺度的 token 预算，必传。 */
+  prepare(messages: readonly ChatMessage[], activeRequest: string, budgetTokens: number): Promise<PreparedContext>;
   /** 上下文超长被 API 拒绝后救急：保留最近几条，更早的历史总结成摘要。 */
   reactiveCompact(messages: readonly ChatMessage[], activeRequest: string): Promise<PreparedContext>;
   /** 最狠的主动压缩：整段历史总结成一条摘要消息。 */
@@ -198,6 +198,10 @@ export interface AgentLoopRuntime {
   readonly systemPrompt: string;
   readonly config: Config;
   readonly provider: ChatProvider;
+  /** 上下文窗口（token 数）。组合根解析注入；缺省时 loop 用保守默认，仅影响 answerLimit，不影响压缩（压缩依赖 compactor）。 */
+  readonly contextWindow?: number | undefined;
+  /** 单次响应最大输出 token。缺省时 loop 用保守默认。 */
+  readonly maxOutputTokens?: number | undefined;
   readonly tools: ToolRegistryPort;
   readonly hooks: HookBus;
   readonly compactor?: CompactionPort | undefined;

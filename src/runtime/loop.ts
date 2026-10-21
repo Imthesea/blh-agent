@@ -7,6 +7,7 @@ import type {
 } from "../contracts/types.js";
 import { isPromptTooLong } from "../contracts/provider-errors.js";
 import { summarize } from "../contracts/text.js";
+import { estimatePromptTokens, TokenEstimator } from "../contracts/estimate.js";
 import type { StopDecision } from "../contracts/goals.js";
 import type { EventBus } from "./events.js";
 import { PRE_TOOL_USE, POST_TOOL_USE } from "../contracts/hooks.js";
@@ -71,6 +72,32 @@ export interface AgentLoopResult {
 /** 提示词过长时，允许「被动压缩后重试」的最大次数。 */
 const MAX_REACTIVE_RETRIES = 1;
 
+/** 组合根未注入窗口/输出上限时的保守兜底（子 agent / 队友走这里）。 */
+const FALLBACK_CONTEXT_WINDOW = 8192;
+const FALLBACK_MAX_OUTPUT_TOKENS = 4096;
+/** 留给回答的余量：window - prompt - SAFETY_BUFFER_TOKENS 即 answerLimit 上限。 */
+const SAFETY_BUFFER_TOKENS = 1024;
+/** answerLimit 低于此值视为预算被压到底（正常路径不该发生），仅告警。 */
+const MIN_ANSWER_TOKENS = 256;
+
+/** 进程内校准器：按模型记录 actual/estimated 的历史最大比例（单调不减）。 */
+const tokenEstimator = new TokenEstimator();
+
+/** prompt 可占用的 token 预算 = 窗口 - 输出上限 - 安全余量。 */
+function computePromptBudget(contextWindow: number, maxOutputTokens: number): number {
+  return Math.max(0, contextWindow - maxOutputTokens - SAFETY_BUFFER_TOKENS);
+}
+
+/** answer 上限 = min(输出上限, 窗口 - prompt - 安全余量)，恒 ≥ 1。 */
+function computeAnswerLimit(contextWindow: number, maxOutputTokens: number, promptTokens: number): number {
+  return Math.max(1, Math.min(maxOutputTokens, contextWindow - promptTokens - SAFETY_BUFFER_TOKENS));
+}
+
+/** 响应是否被截断：openai 的 length / anthropic 的 max_tokens。 */
+function isTruncated(message: ChatMessage): boolean {
+  return message.finishReason === "length" || message.finishReason === "max_tokens";
+}
+
 /** 若有 system 消息，则把它拼到消息列表最前面；无则原样返回。用于构造模型输入。 */
 function withSystem(
   messages: readonly ChatMessage[],
@@ -112,6 +139,12 @@ export async function runAgentLoop(
   let modelMessages: readonly ChatMessage[] = transcript.messages;
   // 流式失败时保留的半成品文字，用于彻底失败时落盘，避免白写内容丢失。
   let streamPartial = "";
+  const contextWindow = harness.contextWindow ?? FALLBACK_CONTEXT_WINDOW;
+  const maxOutputTokens = harness.maxOutputTokens ?? FALLBACK_MAX_OUTPUT_TOKENS;
+  const promptBudget = computePromptBudget(contextWindow, maxOutputTokens);
+  const model = harness.config.model;
+  // compactor 用原始估算（estimateContextTokens），预算需换算到原始尺度，保证 raw × ratio ≤ promptBudget。
+  const compactorBudget = Math.floor(promptBudget / tokenEstimator.ratio(model));
 
   if (events !== undefined) await events.emit({ type: "turn_start" });
   harness.tracer?.beginTurn(activeRequest);
@@ -149,7 +182,7 @@ export async function runAgentLoop(
       // 第 3 步：准备模型输入（有压缩器时先尝试压缩）。
       const compactor = harness.compactor;
       if (compactor) {
-        const prepared = await compactor.prepare(transcript.conversation, activeRequest);
+        const prepared = await compactor.prepare(transcript.conversation, activeRequest, compactorBudget);
         if (prepared.compaction) {
           compactTranscript(transcript, prepared.compaction);
           modelMessages = transcript.messages;
@@ -162,6 +195,12 @@ export async function runAgentLoop(
 
       // 第 4 步：调用模型生成回复（优先流式，失败回退非流式）。
       const tools = harness.tools.list();
+      const rawPromptTokens = estimatePromptTokens(modelMessages, tools);
+      const estimatedPromptTokens = tokenEstimator.scale(model, rawPromptTokens);
+      const answerLimit = computeAnswerLimit(contextWindow, maxOutputTokens, estimatedPromptTokens);
+      if (answerLimit < MIN_ANSWER_TOKENS) {
+        log.warn("answer limit starved", { model, answerLimit, estimatedPromptTokens, contextWindow });
+      }
       let message: ChatMessage;
       const streamAvailable = events !== undefined && harness.provider.stream !== undefined;
       let usage: ChatUsage | null = null;
@@ -176,6 +215,7 @@ export async function runAgentLoop(
               tools,
               events,
               signal,
+              answerLimit,
             );
             message = streamed.message;
             usage = streamed.usage;
@@ -206,6 +246,7 @@ export async function runAgentLoop(
                   tools,
                   events,
                   signal,
+                  answerLimit,
                 );
                 message = retried.message;
                 usage = retried.usage;
@@ -221,6 +262,7 @@ export async function runAgentLoop(
                   events,
                   signal,
                   partialText,
+                  answerLimit,
                 );
                 message = response.message;
                 usage = response.usage;
@@ -233,6 +275,7 @@ export async function runAgentLoop(
                 events,
                 signal,
                 partialText,
+                answerLimit,
               );
               message = response.message;
               usage = response.usage;
@@ -244,12 +287,16 @@ export async function runAgentLoop(
             modelMessages,
             tools,
             signal,
+            answerLimit,
           );
           message = response.message;
           usage = response.usage;
         }
 
         iterations += 1;
+        if (usage !== null && usage.promptTokens > 0) {
+          tokenEstimator.observe(model, rawPromptTokens, usage.promptTokens);
+        }
         harness.tracer?.event("llm", {
           provider: harness.config.provider ?? "deepseek",
           model: harness.config.model,
@@ -304,6 +351,16 @@ export async function runAgentLoop(
           transcript.append({ role: "assistant", content: streamPartial, cancelled: true });
         }
         throw error;
+      }
+
+      // R3(b)：响应被截断且带 tool_calls 时，残缺调用不可执行；落盘半成品（不带 tool_calls）并结束本轮。
+      if (isTruncated(message) && (message.tool_calls?.length ?? 0) > 0) {
+        log.warn("truncated tool call response discarded", { model, finishReason: message.finishReason });
+        const partial: ChatMessage = { role: "assistant", content: message.content, cancelled: true };
+        transcript.append(partial);
+        harness.tracer?.endTurn("truncated");
+        if (events !== undefined) await events.emit({ type: "turn_end" });
+        return { status: "completed", iterations, finalAssistant: partial };
       }
 
       transcript.append(message);
@@ -498,8 +555,9 @@ async function streamAssistantMessage(
   tools: ToolDefinition[],
   events: EventBus,
   signal?: AbortSignal,
+  maxTokens?: number,
 ): Promise<{ message: ChatMessage; usage: ChatUsage | null }> {
-  const stream = provider.stream!(messages, tools, undefined, signal);
+  const stream = provider.stream!(messages, tools, maxTokens, signal);
   let partialText = "";
   try {
     for await (const event of stream) {
@@ -526,11 +584,12 @@ async function requestAssistantMessage(
   messages: readonly ChatMessage[],
   tools: ToolDefinition[],
   signal?: AbortSignal,
+  maxTokens?: number,
 ): Promise<{ message: ChatMessage; usage: ChatUsage | null }> {
   if (provider.chatWithUsage !== undefined) {
-    return provider.chatWithUsage(messages, tools, undefined, signal);
+    return provider.chatWithUsage(messages, tools, maxTokens, signal);
   }
-  const message = await provider.chat(messages, tools, undefined, signal);
+  const message = await provider.chat(messages, tools, maxTokens, signal);
   return { message, usage: null };
 }
 
@@ -545,8 +604,9 @@ async function requestAssistantMessageComplete(
   events: EventBus,
   signal: AbortSignal | undefined,
   partialText: string,
+  maxTokens?: number,
 ): Promise<{ message: ChatMessage; usage: ChatUsage | null }> {
-  const response = await requestAssistantMessage(provider, messages, tools, signal);
+  const response = await requestAssistantMessage(provider, messages, tools, signal, maxTokens);
   const completeText = response.message.content ?? "";
   // 有完整文本要替换，或之前展示过半截需要清空时，才发替换事件。
   if (partialText !== "" || completeText !== "") {

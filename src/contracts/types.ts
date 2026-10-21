@@ -12,6 +12,10 @@ export interface ProviderDefinition {
   baseUrl: string;
   apiKeyEnv: string[];
   defaultModel: string;
+  /** 模型上下文窗口（token 数）；未提供时由 resolveContextWindow 走保守默认。 */
+  contextWindow?: number;
+  /** 单次响应最大输出 token 数；未提供时由 resolveMaxOutputTokens 走保守默认。 */
+  maxOutputTokens?: number;
 }
 
 /** 一次工具调用的描述：模型想调用哪个函数、传什么参数 */
@@ -36,6 +40,8 @@ export interface ChatMessage {
   isCompactionSummary?: boolean;
   /** 稳定消息 id（事件 seq），供前端做稳定 React key */
   id?: string;
+  /** 仅当响应被截断时填充：openai 的 "length" / anthropic 的 "max_tokens"。用于拦截残缺的 tool_call。 */
+  finishReason?: "length" | "max_tokens";
 }
 
 export type ToolHandler = (args: Record<string, unknown>, signal?: AbortSignal) => Promise<string>;

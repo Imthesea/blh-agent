@@ -48,6 +48,8 @@ function makeHarness(
     agents?: TeamAgentsPort;
     goal?: GoalController;
     tracer?: Tracer;
+    contextWindow?: number;
+    maxOutputTokens?: number;
   } = {},
 ) {
   const tools = new ToolRegistry();
@@ -72,6 +74,10 @@ function makeHarness(
     options.goal,
     undefined,
     options.tracer,
+    undefined,
+    undefined,
+    options.contextWindow,
+    options.maxOutputTokens,
   );
 }
 
@@ -361,8 +367,8 @@ describe("agentLoop 压缩集成", () => {
       makeTextMessage("done"),
     ]);
     const compactor = makeCompactor(tmpDir, provider);
-    compactor.contextCharLimit = 10; // 极小阈值，纯文本经 micro/fit 无法削减，必然走 compactHistory
-    const harness = makeHarness([], { compactor, provider });
+    // 用极小窗口把 token 预算压到 0，纯文本经 micro/fit 无法削减，必然走 compactHistory。
+    const harness = makeHarness([], { compactor, provider, contextWindow: 512, maxOutputTokens: 128 });
     const transcript = harness.newTranscript();
     await harness.runTurn(transcript, "a".repeat(1000));
     expect(transcript.messages[0]?.role).toBe("system");
@@ -1241,5 +1247,63 @@ describe("agentLoop tracing", () => {
     const llm = readTrace(dir).find((event) => event["type"] === "llm");
     expect(llm?.["usage"]).toBeNull();
     expect(readLedgerCount(dir)).toBe(0);
+  });
+});
+
+describe("S1 窗口预算接线", () => {
+  let tmpDir: string;
+  beforeEach(() => {
+    tmpDir = mkdtempSync(path.join(os.tmpdir(), "loop-budget-"));
+  });
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("主请求把计算出的 maxTokens 传给 provider（chatWithUsage 路径）", async () => {
+    const receivedMaxTokens: Array<number | undefined> = [];
+    const provider: ChatProvider = {
+      async chatWithUsage(_messages, _tools, maxTokens) {
+        receivedMaxTokens.push(maxTokens);
+        return { message: makeTextMessage("done"), usage: { promptTokens: 100, completionTokens: 50 } };
+      },
+      async chat() {
+        return makeTextMessage("done");
+      },
+    };
+    const harness = makeHarness([], { provider, contextWindow: 32768, maxOutputTokens: 8192 });
+    const transcript = harness.newTranscript();
+    await harness.runTurn(transcript, "hello");
+    expect(receivedMaxTokens.length).toBeGreaterThan(0);
+    for (const maxTokens of receivedMaxTokens) {
+      expect(typeof maxTokens).toBe("number");
+      expect(maxTokens).toBeGreaterThan(0);
+      expect(maxTokens).toBeLessThanOrEqual(8192);
+    }
+  });
+
+  it("8k 窗口下长历史在发请求前先压缩，主请求不再含长 assistant 原文", async () => {
+    const mainRequests: ChatMessage[][] = [];
+    const provider: ChatProvider = {
+      async chat() {
+        return makeTextMessage("history summary");
+      },
+      async chatWithUsage(messages) {
+        mainRequests.push([...messages]);
+        return { message: makeTextMessage("done"), usage: { promptTokens: 10, completionTokens: 2 } };
+      },
+    };
+    const compactor = makeCompactor(tmpDir, provider);
+    const harness = makeHarness([], { compactor, provider, contextWindow: 8192, maxOutputTokens: 4096 });
+    const transcript = harness.newTranscript();
+    for (let i = 0; i < 40; i++) {
+      transcript.append({ role: "user", content: `q-${i}` });
+      transcript.append({ role: "assistant", content: `a-${i}-` + "z".repeat(600) });
+    }
+    await harness.runTurn(transcript, "continue now");
+    expect(mainRequests.length).toBeGreaterThan(0);
+    const payload = JSON.stringify(mainRequests[0]);
+    expect(payload).toContain("[已压缩]");
+    expect(payload).not.toContain("a-20-");
+    expect(payload).toContain("continue now");
   });
 });

@@ -47,7 +47,10 @@ function toOpenAIMessage(message: ChatMessage): OpenAI.ChatCompletionMessagePara
   }
 }
 
-function fromOpenAIMessage(message: OpenAI.ChatCompletionMessage): ChatMessage {
+function fromOpenAIMessage(
+  message: OpenAI.ChatCompletionMessage,
+  finishReason?: string | null,
+): ChatMessage {
   const toolCalls: ToolCall[] = [];
   for (const call of message.tool_calls ?? []) {
     // 防御 custom tool call 联合类型：本项目只使用 function tool
@@ -62,6 +65,8 @@ function fromOpenAIMessage(message: OpenAI.ChatCompletionMessage): ChatMessage {
     role: "assistant",
     content: message.content,
     ...(toolCalls.length ? { tool_calls: toolCalls } : {}),
+    // 仅截断原因才上报，避免污染消息形状（"stop" 等正常原因不携带该字段）。
+    ...(finishReason === "length" ? { finishReason: "length" } : {}),
   };
 }
 
@@ -128,7 +133,7 @@ export class OpenAICompatProvider implements ChatProvider {
         }
       : null;
     if (usage !== null) this.last = usage;
-    return { message: fromOpenAIMessage(message), usage };
+    return { message: fromOpenAIMessage(message, response.choices[0]?.finish_reason), usage };
   }
 
   async chat(messages: readonly ChatMessage[], tools: ToolDefinition[], maxTokens?: number, signal?: AbortSignal): Promise<ChatMessage> {
@@ -167,7 +172,7 @@ export class OpenAICompatProvider implements ChatProvider {
       this.last = { promptTokens: response.usage.prompt_tokens, completionTokens: response.usage.completion_tokens };
     }
     return {
-      message: fromOpenAIMessage(message),
+      message: fromOpenAIMessage(message, response.choices[0]?.finish_reason),
       usage: {
         promptTokens: response.usage?.prompt_tokens ?? 0,
         completionTokens: response.usage?.completion_tokens ?? 0,
@@ -210,6 +215,7 @@ export class OpenAICompatProvider implements ChatProvider {
     let text = "";
     const calls = new Map<number, { id: string; name: string; arguments: string }>();
     let usage: ChatUsage | undefined;
+    let finishReason: string | null = null;
 
     for await (const chunk of stream) {
       const delta = chunk.choices[0]?.delta;
@@ -237,6 +243,9 @@ export class OpenAICompatProvider implements ChatProvider {
           completionTokens: chunk.usage.completion_tokens,
         };
       }
+      if (chunk.choices[0]?.finish_reason) {
+        finishReason = chunk.choices[0].finish_reason;
+      }
     }
 
     const toolCalls: ToolCall[] = [...calls.values()].map((c) => ({
@@ -248,6 +257,7 @@ export class OpenAICompatProvider implements ChatProvider {
       role: "assistant",
       content: text || null,
       ...(toolCalls.length ? { tool_calls: toolCalls } : {}),
+      ...(finishReason === "length" ? { finishReason: "length" } : {}),
     };
     yield { type: "done", message, ...(usage ? { usage } : {}) };
   }

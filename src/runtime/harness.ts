@@ -45,6 +45,8 @@ export class Harness implements AgentLoopRuntime {
     readonly tracer?: TracerPort,
     readonly lifecycle?: LifecycleManager,
     baseSystemPrompt?: string,
+    readonly contextWindow?: number,
+    readonly maxOutputTokens?: number,
   ) {
     const base =
       baseSystemPrompt ??

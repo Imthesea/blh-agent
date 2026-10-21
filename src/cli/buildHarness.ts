@@ -8,6 +8,7 @@ import { Harness } from "../runtime/harness.js";
 import { HookBus } from "../runtime/hooks.js";
 import { PRE_TOOL_USE } from "../contracts/hooks.js";
 import { createProvider } from "../providers/registry.js";
+import { findProviderDefinition, resolveContextWindow, resolveMaxOutputTokens } from "../providers/catalog.js";
 import { ToolRegistry } from "../tools/registry.js";
 import { registerBuiltinTools } from "../tools/index.js";
 import {
@@ -104,6 +105,11 @@ export function buildHarness(
 
   // 创建模型提供者：按 config.provider 走对应厂商适配器（这是所有「用模型」能力的底层）。
   const provider = opts?.provider ?? createProvider(config, diagnostics);
+
+  // 解析上下文窗口与输出上限（供 loop 做 token 预算；仅主 agent 注入）。
+  const providerDefinition = findProviderDefinition(config.provider ?? "");
+  const contextWindow = resolveContextWindow(providerDefinition);
+  const maxOutputTokens = resolveMaxOutputTokens(providerDefinition);
 
   // 统一上报启动诊断：错误阻断启动，警告仅提示。
   if (diagnostics.hasErrors()) {
@@ -220,6 +226,9 @@ export function buildHarness(
     workflowStore,
     tracer,
     lifecycle,
+    undefined,
+    contextWindow,
+    maxOutputTokens,
   );
 
   const autoConnects = (config.mcpServers ?? []).map((server) => {
