@@ -28,6 +28,8 @@ export class Harness implements AgentLoopRuntime {
   readonly systemPrompt: string;
   /** 会话留档入口；仅 REPL 注入，-p 模式为 undefined（不落盘）。 */
   sessionStore?: SessionStorePort;
+  /** 已写入每日留档的最大事件 seq；logTurn 按它只追加本轮新增消息。 */
+  private lastLoggedSeq = 0;
 
   /** 创建一个 Harness：把所有依赖串起来，并组装系统提示词。 */
   constructor(
@@ -119,13 +121,19 @@ export class Harness implements AgentLoopRuntime {
     if (this.memory && (await this.memory.extract(transcript.messages))) {
       await this.memory.consolidate();
     }
-    this.logTurn(transcript.messages);
+    this.logTurn(transcript.messagesWithIds);
   }
 
-  /** 会话留档：把一轮成功结束后的最终投影追加到 <sessions>/chat/<day>.md；仅在有 sessionStore 时写。 */
+  /** 会话留档：只把本轮新增的消息追加到 <sessions>/chat/<day>.md（按 seq 增量，避免每轮全量重写）。 */
   private logTurn(messages: readonly ChatMessage[]): void {
     if (this.sessionStore === undefined) return;
-    appendDailyLog(path.dirname(this.sessionStore.path), messages);
+    const fresh = messages.filter((m) => {
+      const seq = m.id !== undefined ? Number(m.id) : Number.NaN;
+      return Number.isInteger(seq) && seq > this.lastLoggedSeq;
+    });
+    if (fresh.length === 0) return;
+    appendDailyLog(path.dirname(this.sessionStore.path), fresh);
+    this.lastLoggedSeq = Math.max(this.lastLoggedSeq, ...fresh.map((m) => Number(m.id)));
   }
 
   /** 跑一轮定时任务：取出到期的定时任务注入对话，执行一轮 agentLoop；出错或被打断就回滚并重新排队。 */
@@ -157,7 +165,7 @@ export class Harness implements AgentLoopRuntime {
     }
     jobs.cron.acknowledge(fired);
     await this.hooks.trigger(STOP, {});
-    this.logTurn(transcript.messages);
+    this.logTurn(transcript.messagesWithIds);
   }
 
   /** dream 是否到期（无记忆系统时恒 false）。 */
@@ -187,7 +195,7 @@ export class Harness implements AgentLoopRuntime {
       dream.applyTrash();
       dream.validateOutput();
       dream.markSuccess();
-      this.logTurn(transcript.messages);
+      this.logTurn(transcript.messagesWithIds);
       this.tracer?.event("job", { kind: "dream", status: "completed" });
     } catch (error) {
       dream.restore(snapshot);
@@ -211,6 +219,6 @@ export class Harness implements AgentLoopRuntime {
       agentLoop(this, transcript, "[team]", undefined, signal),
     );
     await this.hooks.trigger(STOP, {});
-    this.logTurn(transcript.messages);
+    this.logTurn(transcript.messagesWithIds);
   }
 }

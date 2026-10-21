@@ -14,6 +14,7 @@ const CHARS_PER_TOKEN = 3.5;
  */
 export const UNCOUNTED_RATIO = 1.35;
 
+/** 粗略估算：按 UTF-16 码元长度 / 3.5。emoji 等增补平面字符会被双计，属有意取舍（避免为计数分配数组，校准会兜底）。 */
 export function estimateTextTokens(text: string): number {
   return Math.ceil(text.length / CHARS_PER_TOKEN);
 }

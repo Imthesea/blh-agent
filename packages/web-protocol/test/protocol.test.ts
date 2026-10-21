@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   WEB_EVENT_TYPES,
+  classifyToolOutcome,
   type ChatMessage,
   type SessionInfo,
   type SessionIdResponse,
@@ -51,6 +52,14 @@ describe("web protocol", () => {
     ];
 
     expect(events.map((event) => JSON.parse(JSON.stringify(event)))).toEqual(events);
+  });
+
+  it("classifyToolOutcome 按前缀把工具结果归类为 error / denied / ok", () => {
+    expect(classifyToolOutcome("error: command failed")).toBe("error");
+    expect(classifyToolOutcome("denied by policy")).toBe("denied");
+    expect(classifyToolOutcome("done")).toBe("ok");
+    expect(classifyToolOutcome("")).toBe("ok");
+    expect(classifyToolOutcome("ERROR: x")).toBe("ok"); // 契约是小写前缀
   });
 
   it("keeps session and message DTO fields stable", () => {

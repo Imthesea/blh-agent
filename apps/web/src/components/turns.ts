@@ -1,4 +1,5 @@
 import type { UiMessage } from "../hooks/useAgentEvents";
+import { classifyToolOutcome } from "@blh/web-protocol";
 
 /** 思考框内的一步：中间文本，或一次工具调用。 */
 export interface ThinkingStep {
@@ -75,7 +76,7 @@ function buildTurn(seg: UiMessage[]): TurnBlock {
       const step = m.tool_call_id ? pendingTools.get(m.tool_call_id) : undefined;
       if (step) {
         step.output = output;
-        step.isError = output.startsWith("error:") || output.startsWith("denied");
+        step.isError = classifyToolOutcome(output) !== "ok";
       } else {
         thinking.push({ id: nextId(), kind: "tool", name: m.name ?? "tool", output });
       }

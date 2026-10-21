@@ -78,7 +78,7 @@ invisible_dots（单 agent）对“记忆”自信的根因不是更聪明的长
 
 - 不引入 tiktoken 依赖：用 chars/3.5 基础估算 + 1.35 系数 + 真实 usage 校准替代。
 - 不做向量检索/embedding 记忆：blh 的 `MemoryRecall` 已优于 invisible_dots，不退回。
-- 不改 v0 legacy 裸消息格式：`SessionStore.loadSession` 只读兼容保持，不迁移旧文件。
+- 已移除 v0 legacy 裸消息读取：无存量旧会话，`SessionStore.loadSession` 直接跳过非事件行。
 - 不做摘要的摘要链（多级 summary 合并）：单层摘要 + raw 兜底足够。
 - 不做前端折叠条复杂 UI：C4 若做，只保“更早对话已压缩”一行提示的等价表达。
 

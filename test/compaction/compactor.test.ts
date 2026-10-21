@@ -230,6 +230,22 @@ describe("ContextCompactor 消息判定原语", () => {
     expect(result[1]?.content?.startsWith("<persisted-output>")).toBe(true);
   });
 
+  it("toolResultBudget 预算满足后不再过度落盘", () => {
+    const compactor = makeCompactor(tmpDir);
+    const big = "x".repeat(40000);
+    const messages = [
+      toolResult("a", big),
+      toolResult("b", big),
+      toolResult("c", big),
+    ];
+    // 三条各约 11429 token；落盘两条后总量应已低于预算，第三条应保持原文（回归：重算曾按原始大小重复计入）。
+    const result = compactor.toolResultBudget(messages, 13000);
+    const persisted = result.filter((m) => (m.content ?? "").startsWith("<persisted-output>"));
+    expect(persisted).toHaveLength(2);
+    const full = result.find((m) => !(m.content ?? "").startsWith("<persisted-output>"));
+    expect(full?.content).toBe(big);
+  });
+
   it("snipCompact 保护头部 tool 配对", () => {
     const compactor = makeCompactor(tmpDir);
     const messages = [
@@ -687,5 +703,9 @@ describe("userRetentionIndex", () => {
   it("无 user 返回 null；预算足够时返回 0（全部保留）", () => {
     expect(ContextCompactor.userRetentionIndex([textMsg("only")], 1000)).toBeNull();
     expect(ContextCompactor.userRetentionIndex([userMsg("a"), userMsg("b")], 100000)).toBe(0);
+  });
+
+  it("预算为 0 时只保留最新一条 user", () => {
+    expect(ContextCompactor.userRetentionIndex([userMsg("old"), userMsg("new")], 0)).toBe(1);
   });
 });

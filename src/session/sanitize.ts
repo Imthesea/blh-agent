@@ -1,7 +1,8 @@
 import type { ChatMessage } from "../contracts/types.js";
+import { TOOL_ERROR_PREFIX } from "@blh/web-protocol";
 
 /** 给声明了但缺结果的 tool_call 补的合成结果内容（崩溃恢复场景）。 */
-export const BACKFILL_TOOL_RESULT = "error: tool result missing (call was interrupted before completion)";
+export const BACKFILL_TOOL_RESULT = `${TOOL_ERROR_PREFIX} tool result missing (call was interrupted before completion)`;
 
 /** 去掉 name 无效的工具调用（防御性）。 */
 export function stripMalformedToolCalls(messages: readonly ChatMessage[]): ChatMessage[] {
@@ -46,7 +47,11 @@ export function dropOrphanToolResults(messages: readonly ChatMessage[]): ChatMes
   return result;
 }
 
-/** 给声明了但缺结果的 tool_call 补合成结果。崩溃恢复场景下缺失结果总在尾部（工具顺序执行）。 */
+/**
+ * 给声明了但缺结果的 tool_call 补合成结果，统一追加在尾部。
+ * 前提：缺失结果总在尾部（崩溃恢复时工具顺序执行，最后一条 assistant 声明调用但未执行）。
+ * 中段缺失不在支持范围；上游 dropOrphanToolResults 只丢孤儿/重复结果，不会制造中段缺失。
+ */
 export function backfillMissingToolResults(messages: readonly ChatMessage[]): ChatMessage[] {
   const needed = new Map<string, { name: string; remaining: number }>();
   for (const message of messages) {

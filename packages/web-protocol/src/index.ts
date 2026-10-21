@@ -79,3 +79,18 @@ export interface SessionMessagesResponse {
 export interface SessionIdResponse {
   sessionId: string;
 }
+
+/** 工具结果的机器可读结局，替代散落在 runtime/UI 里的 "error:"/"denied" 字符串前缀判定。 */
+export type ToolOutcome = "ok" | "error" | "denied";
+
+/** 工具结果失败前缀：单一定义，生产者（如 tools/registry）与消费者（runtime/UI）共用。 */
+export const TOOL_ERROR_PREFIX = "error:";
+/** 工具结果被拒绝前缀（hook 拦截返回）。 */
+export const TOOL_DENIED_PREFIX = "denied";
+
+/** 工具结果结局分类的唯一实现：按前缀判定，调用方不再各自写 startsWith。 */
+export function classifyToolOutcome(output: string): ToolOutcome {
+  if (output.startsWith(TOOL_ERROR_PREFIX)) return "error";
+  if (output.startsWith(TOOL_DENIED_PREFIX)) return "denied";
+  return "ok";
+}

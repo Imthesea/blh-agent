@@ -188,11 +188,8 @@ export class ContextCompactor {
       if (estimateTextTokens(output) <= ContextCompactor.LARGE_RESULT_TOKEN_LIMIT) continue;
       const replacement = this.persistLargeOutput(item.message.tool_call_id ?? "unknown", output);
       working[item.index] = { ...item.message, content: replacement };
-      // 替换后重新计算总量。
-      total = batch.reduce((sum, candidate) => {
-        const content = candidate.index === item.index ? replacement : ContextCompactor.contentOf(candidate.message);
-        return sum + estimateTextTokens(content);
-      }, 0);
+      // 就地递减总量；重算必须基于 working，否则之前已替换的条目会被按原始大小计入。
+      total -= estimateTextTokens(output) - estimateTextTokens(replacement);
     }
     return working;
   }
@@ -419,9 +416,8 @@ export class ContextCompactor {
   }
 
 
-  /** 从后往前按 token 预算保留最近的 user 消息，返回应保留的第一条 user 下标；null = 全部保留（无 user 或预算不设）。 */
+  /** 从后往前按 token 预算保留最近的 user 消息，返回应保留的第一条 user 下标；null = 无 user。预算 ≤ 0 时只保留最新一条。 */
   static userRetentionIndex(messages: readonly ChatMessage[], userRetentionTokens: number): number | null {
-    if (userRetentionTokens <= 0) return null;
     const userIndexes: number[] = [];
     for (let i = 0; i < messages.length; i++) {
       if (messages[i]?.role === "user") userIndexes.push(i);

@@ -6,6 +6,7 @@ import {
   validateTimeoutSeconds,
 } from "../process/output.js";
 import { terminateProcessTree } from "../process/terminate.js";
+import { TOOL_ERROR_PREFIX } from "@blh/web-protocol";
 
 export interface BackgroundTask {
   command: string;
@@ -58,7 +59,7 @@ function runBashProcess(
     };
 
     if (signal?.aborted) {
-      terminate("error: command cancelled", null, true);
+      terminate(`${TOOL_ERROR_PREFIX} command cancelled`, null, true);
       return;
     }
 
@@ -67,7 +68,7 @@ function runBashProcess(
       detached: process.platform !== "win32",
     });
 
-    const onAbort = () => terminate("error: command cancelled", null, true, child);
+    const onAbort = () => terminate(`${TOOL_ERROR_PREFIX} command cancelled`, null, true, child);
     signal?.addEventListener("abort", onAbort, { once: true });
 
     child.stdout?.on("data", (chunk: Buffer) => stdout.append(chunk));
@@ -75,7 +76,7 @@ function runBashProcess(
 
     child.on("error", (error) => {
       finish(
-        termination?.output ?? `error: ${error.message}`,
+        termination?.output ?? `${TOOL_ERROR_PREFIX} ${error.message}`,
         termination?.exitCode ?? 1,
         termination?.cancelled,
       );
@@ -96,7 +97,7 @@ function runBashProcess(
     });
 
     timer = setTimeout(() => {
-      terminate(`error: command timed out after ${timeout}s`, null, false, child);
+      terminate(`${TOOL_ERROR_PREFIX} command timed out after ${timeout}s`, null, false, child);
     }, timeout * 1000 + 50);
     timer.unref();
 

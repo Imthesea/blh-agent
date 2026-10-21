@@ -5,6 +5,7 @@ import {
   validateTimeoutSeconds,
 } from "../process/output.js";
 import { terminateProcessTree } from "../process/terminate.js";
+import { TOOL_ERROR_PREFIX } from "@blh/web-protocol";
 
 export function runBash(
   workdir: string,
@@ -50,7 +51,7 @@ export function runBash(
     };
 
     if (signal?.aborted) {
-      finish("error: command cancelled");
+      finish(`${TOOL_ERROR_PREFIX} command cancelled`);
       return;
     }
 
@@ -60,7 +61,7 @@ export function runBash(
     });
 
     const onAbort = () => {
-      terminate("error: command cancelled", child);
+      terminate(`${TOOL_ERROR_PREFIX} command cancelled`, child);
     };
     if (signal !== undefined) {
       if (signal.aborted) {
@@ -74,7 +75,7 @@ export function runBash(
     child.stderr?.on("data", (chunk: Buffer) => stderr.append(chunk));
 
     child.on("error", (error) => {
-      finish(terminationOutput ?? `error: ${error.message}`);
+      finish(terminationOutput ?? `${TOOL_ERROR_PREFIX} ${error.message}`);
     });
 
     child.on("close", (code) => {
@@ -93,7 +94,7 @@ export function runBash(
     });
 
     timer = setTimeout(() => {
-      terminate(`error: command timed out after ${timeoutSec}s`, child);
+      terminate(`${TOOL_ERROR_PREFIX} command timed out after ${timeoutSec}s`, child);
     }, timeoutSec * 1000 + 50);
     timer.unref();
 

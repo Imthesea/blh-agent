@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import path from "node:path";
 import { resolveToCwd } from "./path-utils.js";
+import { TOOL_ERROR_PREFIX } from "@blh/web-protocol";
 
 export class PathEscapeError extends Error {}
 
@@ -53,7 +54,7 @@ export async function readFile(
   if (sandboxRoot !== undefined) await assertInside(sandboxRoot, await fs.realpath(filePath));
   const stat = await fs.stat(filePath);
   if (stat.size > MAX_READ_BYTES) {
-    return `error: file exceeds max read size (${MAX_READ_BYTES} bytes)`;
+    return `${TOOL_ERROR_PREFIX} file exceeds max read size (${MAX_READ_BYTES} bytes)`;
   }
   const text = await fs.readFile(filePath, "utf8");
   const lines = text.split("\n");
@@ -119,7 +120,7 @@ export async function editFile(
   const text = await fs.readFile(filePath, "utf8");
   const count = text.split(oldText).length - 1;
   if (count !== 1) {
-    return `error: old_text occurs ${count} times (must be exactly 1)`;
+    return `${TOOL_ERROR_PREFIX} old_text occurs ${count} times (must be exactly 1)`;
   }
   await fs.writeFile(filePath, text.replace(oldText, newText), "utf8");
   return `edited ${filePath}`;

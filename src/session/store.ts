@@ -126,7 +126,7 @@ export class SessionStore {
     rmSync(filePath, { force: true });
   }
 
-  /** 读取 header 与事件；旧格式裸消息会包装为 message 事件。 */
+  /** 读取 header 与事件；非事件行（如 v0 旧格式裸消息）会被跳过。 */
   static loadSession(filePath: string): LoadedSession {
     let raw: string;
     try {

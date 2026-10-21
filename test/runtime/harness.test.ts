@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it, expect } from "vitest";
@@ -85,6 +85,37 @@ describe("Harness", () => {
     expect(transcript.messages[0]).toEqual({ role: "system", content: harness.systemPrompt });
     expect(transcript.messages[1]).toEqual({ role: "user", content: "hi" });
     expect(transcript.messages[2]).toEqual({ role: "assistant", content: "hello!" });
+  });
+
+  it("runTurn 每轮只追加新增消息到每日留档，不重复写历史", async () => {
+    const tmpDir = mkdtempSync(path.join(os.tmpdir(), "harness-dailylog-"));
+    try {
+      const harness = new Harness(
+        config,
+        new MockProvider([makeTextMessage("first!"), makeTextMessage("second!")]),
+        new ToolRegistry(),
+        new HookBus(),
+      );
+      harness.sessionStore = {
+        path: path.join(tmpDir, "sessions", "session_1.jsonl"),
+        appendEvent: () => {},
+      };
+      const transcript = harness.newTranscript();
+      await harness.runTurn(transcript, "one");
+      await harness.runTurn(transcript, "two");
+
+      const chatDir = path.join(tmpDir, "sessions", "chat");
+      const files = readdirSync(chatDir).filter((f) => f.endsWith(".md"));
+      expect(files).toHaveLength(1);
+      const text = readFileSync(path.join(chatDir, files[0]!), "utf8");
+      // 两轮各一条 user/assistant，历史消息不重复落盘
+      expect(text.split("one").length - 1).toBe(1);
+      expect(text.split("two").length - 1).toBe(1);
+      expect(text.split("first!").length - 1).toBe(1);
+      expect(text.split("second!").length - 1).toBe(1);
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 
   it("goalCommand parses /goal as status", () => {

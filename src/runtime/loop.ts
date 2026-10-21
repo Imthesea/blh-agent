@@ -12,6 +12,7 @@ import type { StopDecision } from "../contracts/goals.js";
 import type { EventBus } from "./events.js";
 import { PRE_TOOL_USE, POST_TOOL_USE } from "../contracts/hooks.js";
 import { createLogger } from "@blh/logger";
+import { classifyToolOutcome, TOOL_ERROR_PREFIX } from "@blh/web-protocol";
 import { parseToolArguments } from "./parse-args.js";
 import type { AgentLoopRuntime, CompactionPlan, GoalEvaluationPort } from "./ports.js";
 import type { Transcript } from "../session/transcript.js";
@@ -160,17 +161,18 @@ export async function runAgentLoop(
   const maxOutputTokens = harness.maxOutputTokens ?? FALLBACK_MAX_OUTPUT_TOKENS;
   const promptBudget = computePromptBudget(contextWindow, maxOutputTokens);
   const model = harness.config.model;
-  // compactor 用原始估算（estimateContextTokens），预算需换算到原始尺度，保证 raw × ratio ≤ promptBudget。
-  // 摘要已作为 system 元数据、不再计入 conversation，故预算里要扣掉它（F3）。
-  const summaryTokens = transcript.summary !== null ? estimateTextTokens(transcript.summary) : 0;
-  const compactorBudget = Math.max(0, Math.floor(promptBudget / tokenEstimator.ratio(model)) - summaryTokens);
-  // 摘要后保留的最近 user 原文 token 预算（原始估算尺度，与 compactor 一致）。
-  const userRetentionTokens = Math.min(20000, Math.floor(compactorBudget / 4));
 
   if (events !== undefined) await events.emit({ type: "turn_start" });
   harness.tracer?.beginTurn(activeRequest);
   try {
     for (;;) {
+      // 每轮重算压缩预算：transcript.summary 会随压缩增长，必须用最新值（F3）。
+      // compactor 用原始估算（estimateContextTokens），预算换算到原始尺度，保证 raw × ratio ≤ promptBudget。
+      const summaryTokens = transcript.summary !== null ? estimateTextTokens(transcript.summary) : 0;
+      const compactorBudget = Math.max(0, Math.floor(promptBudget / tokenEstimator.ratio(model)) - summaryTokens);
+      // 摘要后保留的最近 user 原文 token 预算（原始估算尺度，与 compactor 一致）。
+      const userRetentionTokens = Math.min(20000, Math.floor(compactorBudget / 4));
+
       // 第 1 步：检查中断信号与最大轮数上限。
       if (signal?.aborted) {
         return cancelTurnAborted(harness, transcript, events, iterations);
@@ -449,7 +451,7 @@ export async function runAgentLoop(
                 status: "started",
               });
             } catch (error) {
-              result = `error: ${error instanceof Error ? error.message : String(error)}`;
+              result = `${TOOL_ERROR_PREFIX} ${error instanceof Error ? error.message : String(error)}`;
             }
             await harness.hooks.trigger(POST_TOOL_USE, { name, input, output: result });
           }
@@ -465,8 +467,9 @@ export async function runAgentLoop(
 
         if (name === "todo_write") usedTodo = true;
 
-        const isError = result.startsWith("error:");
-        const isDenied = result.startsWith("denied");
+        const outcome = classifyToolOutcome(result);
+        const isError = outcome === "error";
+        const isDenied = outcome === "denied";
 
         if (events !== undefined) {
           await events.emit({
