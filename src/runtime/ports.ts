@@ -29,8 +29,10 @@ export interface ToolRegistryPort {
 export interface CompactionPlan {
   /** 摘要消息本身。 */
   summaryMessage: ChatMessage;
-  /** 输入 messages 数组（不含 system，纯对话）中第一条保留消息的下标；null 表示全量摘要。 */
+  /** 输入 messages 数组（不含 system，纯对话）中第一条保留的非 user 消息下标；null 表示全量摘要。 */
   firstKeptIndex: number | null;
+  /** 输入 messages 数组中第一条保留的 user 消息下标；null 表示全部保留（旧行为）。 */
+  firstKeptUserIndex: number | null;
 }
 
 export interface PreparedContext {
@@ -41,12 +43,12 @@ export interface PreparedContext {
 }
 
 export interface CompactionPort {
-  /** 调模型前主动压缩：优先本地操作（挪工具结果、砍中间），实在压不下才做整体摘要。budgetTokens 为原始估算尺度的 token 预算，必传。 */
-  prepare(messages: readonly ChatMessage[], activeRequest: string, budgetTokens: number): Promise<PreparedContext>;
+  /** 调模型前主动压缩：优先本地操作（挪工具结果、砍中间），实在压不下才做整体摘要。budgetTokens 为原始估算尺度的 token 预算，必传；userRetentionTokens 可选，控制摘要后保留的最近 user 原文 token 量。 */
+  prepare(messages: readonly ChatMessage[], activeRequest: string, budgetTokens: number, userRetentionTokens?: number): Promise<PreparedContext>;
   /** 上下文超长被 API 拒绝后救急：保留最近几条，更早的历史总结成摘要。 */
-  reactiveCompact(messages: readonly ChatMessage[], activeRequest: string): Promise<PreparedContext>;
+  reactiveCompact(messages: readonly ChatMessage[], activeRequest: string, userRetentionTokens?: number): Promise<PreparedContext>;
   /** 最狠的主动压缩：整段历史总结成一条摘要消息。 */
-  compactHistory(messages: readonly ChatMessage[], activeRequest: string): Promise<PreparedContext>;
+  compactHistory(messages: readonly ChatMessage[], activeRequest: string, userRetentionTokens?: number): Promise<PreparedContext>;
 }
 
 /** 压缩器端口：在压缩能力之外，额外暴露「工具结果挪磁盘」的目标目录。 */

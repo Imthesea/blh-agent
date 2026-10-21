@@ -416,18 +416,36 @@ export class ContextCompactor {
   }
 
   /**
-   * 把「摘要 + 当前用户请求」拼成一条 user 消息，用来替换被压缩掉的历史。
-   * 这样模型看到的就变成：一条 user 消息里带着「用户要什么」+「之前对话的摘要」，
-   * 既保留了关键信息，又省了大量 token。
+   * 把「摘要」拼成一条 user 消息，用来替换被压缩掉的历史。
+   * 用户最近的原文由 user 保留预算（firstKeptUserIndex）原样保留，摘要不再重复嵌入当前请求。
    */
-  static summaryMessage(label: string, request: string, summary: string): ChatMessage {
+  static summaryMessage(label: string, summary: string): ChatMessage {
     return {
       role: "user",
       isCompactionSummary: true,
-      content:
-        `[${label}]\n\n当前用户请求：\n${request}\n\n` +
-        `对话摘要（仅供参考）：\n${JSON.stringify(summary)}`,
+      content: `[${label}]\n\n对话摘要（仅供参考）：\n${JSON.stringify(summary)}`,
     };
+  }
+
+  /** 从后往前按 token 预算保留最近的 user 消息，返回应保留的第一条 user 下标；null = 全部保留（无 user 或预算不设）。 */
+  static userRetentionIndex(messages: readonly ChatMessage[], userRetentionTokens: number): number | null {
+    if (userRetentionTokens <= 0) return null;
+    const userIndexes: number[] = [];
+    for (let i = 0; i < messages.length; i++) {
+      if (messages[i]?.role === "user") userIndexes.push(i);
+    }
+    if (userIndexes.length === 0) return null;
+    // 至少保留最新一条 user（即使它单条就超预算）。
+    let keepFrom = userIndexes[userIndexes.length - 1]!;
+    let used = estimateTextTokens(messages[keepFrom]?.content ?? "");
+    for (let k = userIndexes.length - 2; k >= 0; k--) {
+      const index = userIndexes[k]!;
+      const tokens = estimateTextTokens(messages[index]?.content ?? "");
+      if (used + tokens > userRetentionTokens) break;
+      used += tokens;
+      keepFrom = index;
+    }
+    return keepFrom;
   }
 
   /**
@@ -435,13 +453,24 @@ export class ContextCompactor {
    * 整个历史只保留这一条 + 当前请求，其余全部丢掉。
    * 在 prepare 里是最后手段，前面所有本地压缩都不管用时才轮到它（因为要花钱调模型）。
    */
-  async compactHistory(messages: readonly ChatMessage[], activeRequest: string): Promise<PreparedContext> {
+  async compactHistory(
+    messages: readonly ChatMessage[],
+    _activeRequest: string,
+    userRetentionTokens?: number,
+  ): Promise<PreparedContext> {
     const summary = await this.summarizeHistory(messages);
     this.tracer?.event("compact", { kind: "proactive", before_msgs: messages.length, after_msgs: 1 });
-    const summaryMessage = ContextCompactor.summaryMessage("已压缩", activeRequest, summary);
+    const summaryMessage = ContextCompactor.summaryMessage("已压缩", summary);
     return {
       messages: [summaryMessage],
-      compaction: { summaryMessage, firstKeptIndex: null },
+      compaction: {
+        summaryMessage,
+        firstKeptIndex: null,
+        firstKeptUserIndex:
+          userRetentionTokens !== undefined
+            ? ContextCompactor.userRetentionIndex(messages, userRetentionTokens)
+            : null,
+      },
     };
   }
 
@@ -454,7 +483,8 @@ export class ContextCompactor {
    */
   async reactiveCompact(
     messages: readonly ChatMessage[],
-    activeRequest: string,
+    _activeRequest: string,
+    userRetentionTokens?: number,
   ): Promise<PreparedContext> {
     const fallback: ChatMessage = { role: "user", content: null };
     // 默认保留最近 5 条，tailStart 是「旧历史」和「保留的尾部」之间的分界点。
@@ -475,17 +505,20 @@ export class ContextCompactor {
     // 分界点之前的部分 = 旧历史，拿去总结成摘要。
     const oldHistory = tailStart ? messages.slice(0, tailStart) : messages;
     const summary = await this.summarizeHistory(oldHistory);
-    const message = ContextCompactor.summaryMessage(
-      "响应式压缩",
-      activeRequest,
-      summary,
-    );
+    const message = ContextCompactor.summaryMessage("响应式压缩", summary);
     // 摘要放最前，尾部最近几条原样保留。
     const result = tailStart ? [message, ...messages.slice(tailStart)] : [message];
     this.tracer?.event("compact", { kind: "reactive", before_msgs: messages.length, after_msgs: result.length });
     return {
       messages: result,
-      compaction: { summaryMessage: message, firstKeptIndex: tailStart || null },
+      compaction: {
+        summaryMessage: message,
+        firstKeptIndex: tailStart || null,
+        firstKeptUserIndex:
+          userRetentionTokens !== undefined
+            ? ContextCompactor.userRetentionIndex(messages, userRetentionTokens)
+            : null,
+      },
     };
   }
 
@@ -508,6 +541,7 @@ export class ContextCompactor {
     messages: readonly ChatMessage[],
     activeRequest: string,
     budgetTokens: number,
+    userRetentionTokens?: number,
   ): Promise<PreparedContext> {
     // 第 1 步：末尾的工具结果太大就先挪磁盘（本地、不花钱）。
     let prepared = this.toolResultBudget(messages);
@@ -526,7 +560,7 @@ export class ContextCompactor {
       }
       if (size > budgetTokens) {
         log.info("自动压缩（token 预算）");
-        return this.compactHistory(messages, activeRequest);
+        return this.compactHistory(messages, activeRequest, userRetentionTokens);
       }
     }
     return { messages: prepared };

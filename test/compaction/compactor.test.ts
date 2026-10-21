@@ -473,13 +473,14 @@ describe("summarizeHistory / compactHistory / reactiveCompact", () => {
     expect(prepared.messages[0]?.role).toBe("user");
     const content = prepared.messages[0]?.content ?? "";
     expect(content.startsWith("[已压缩]")).toBe(true);
-    expect(content).toContain("当前用户请求：\nfix the bug");
+    expect(content).toContain("对话摘要（仅供参考）");
     expect(content).toContain("the summary");
     expect(content).not.toContain("Full transcript:");
     expect(existsSync(path.join(tmpDir, ".transcripts"))).toBe(false);
     expect(prepared.compaction).toEqual({
       summaryMessage: prepared.messages[0],
       firstKeptIndex: null,
+      firstKeptUserIndex: null,
     });
   });
 
@@ -617,7 +618,7 @@ describe("prepare 管线", () => {
     const { messages: prepared, compaction } = await compactor.prepare(messages, "big task", 100);
     expect(prepared).toHaveLength(1);
     expect(prepared[0]?.content?.startsWith("[已压缩]")).toBe(true);
-    expect(prepared[0]?.content).toContain("当前用户请求：\nbig task");
+    expect(prepared[0]?.content).toContain("对话摘要（仅供参考）");
     expect(compaction?.firstKeptIndex).toBeNull();
   });
 });
@@ -679,5 +680,25 @@ describe("ContextCompactor（trace 事件）", () => {
         after_msgs: result.messages.length,
       }),
     ]);
+  });
+});
+
+describe("userRetentionIndex", () => {
+  it("保留最近的 user，超预算裁掉旧的，且至少保留最新一条", () => {
+    const oldText = "x".repeat(200);
+    const latestText = "latest";
+    const messages = [
+      userMsg(oldText), textMsg("a1"),
+      userMsg(oldText), textMsg("a2"),
+      userMsg(latestText),
+    ];
+    const latestAndOneOld = estimateTextTokens(latestText) + estimateTextTokens(oldText);
+    expect(ContextCompactor.userRetentionIndex(messages, latestAndOneOld)).toBe(2);
+    expect(ContextCompactor.userRetentionIndex(messages, estimateTextTokens(latestText))).toBe(4);
+  });
+
+  it("无 user 返回 null；预算足够时返回 0（全部保留）", () => {
+    expect(ContextCompactor.userRetentionIndex([textMsg("only")], 1000)).toBeNull();
+    expect(ContextCompactor.userRetentionIndex([userMsg("a"), userMsg("b")], 100000)).toBe(0);
   });
 });

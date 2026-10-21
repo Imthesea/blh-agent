@@ -414,9 +414,7 @@ describe("agentLoop 压缩集成", () => {
     expect(transcript.messages).toHaveLength(4); // system + 摘要 + 保留的用户请求 + 最终答复
     expect(transcript.messages[0]?.role).toBe("system");
     expect(transcript.messages[1]?.content?.startsWith("[已压缩]")).toBe(true);
-    expect(transcript.messages[1]?.content).toContain(
-      "当前用户请求：\nnote then compact",
-    );
+    expect(transcript.messages[1]?.content).toContain("对话摘要（仅供参考）");
     expect(transcript.messages[1]?.content).toContain("conversation summary");
     expect(transcript.messages[1]?.content).not.toContain("Full transcript:");
     expect(transcript.messages[2]?.role).toBe("user");

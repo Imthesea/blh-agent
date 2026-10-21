@@ -122,7 +122,11 @@ function compactTranscript(transcript: Transcript, plan: CompactionPlan): void {
     plan.firstKeptIndex === null
       ? null
       : transcript.messageSeqAt(plan.firstKeptIndex);
-  transcript.compact(plan.summaryMessage, firstKeptSeq);
+  const firstKeptUserSeq =
+    plan.firstKeptUserIndex === null
+      ? null
+      : transcript.messageSeqAt(plan.firstKeptUserIndex);
+  transcript.compact(plan.summaryMessage, firstKeptSeq, firstKeptUserSeq);
 }
 
 /** 核心对话循环。事实状态只能通过 Transcript 事件提交；模型输入是本轮投影。 */
@@ -145,6 +149,8 @@ export async function runAgentLoop(
   const model = harness.config.model;
   // compactor 用原始估算（estimateContextTokens），预算需换算到原始尺度，保证 raw × ratio ≤ promptBudget。
   const compactorBudget = Math.floor(promptBudget / tokenEstimator.ratio(model));
+  // 摘要后保留的最近 user 原文 token 预算（原始估算尺度，与 compactor 一致）。
+  const userRetentionTokens = Math.min(20000, Math.floor(compactorBudget / 4));
 
   if (events !== undefined) await events.emit({ type: "turn_start" });
   harness.tracer?.beginTurn(activeRequest);
@@ -182,7 +188,7 @@ export async function runAgentLoop(
       // 第 3 步：准备模型输入（有压缩器时先尝试压缩）。
       const compactor = harness.compactor;
       if (compactor) {
-        const prepared = await compactor.prepare(transcript.conversation, activeRequest, compactorBudget);
+        const prepared = await compactor.prepare(transcript.conversation, activeRequest, compactorBudget, userRetentionTokens);
         if (prepared.compaction) {
           compactTranscript(transcript, prepared.compaction);
           modelMessages = transcript.messages;
@@ -336,7 +342,7 @@ export async function runAgentLoop(
         }
 
         if (compactor && isPromptTooLong(error) && reactiveRetries < MAX_REACTIVE_RETRIES) {
-          const compacted = await compactor.reactiveCompact(transcript.conversation, activeRequest);
+          const compacted = await compactor.reactiveCompact(transcript.conversation, activeRequest, userRetentionTokens);
           if (compacted.compaction) {
             compactTranscript(transcript, compacted.compaction);
             modelMessages = transcript.messages;
@@ -485,7 +491,7 @@ export async function runAgentLoop(
       }
 
       if (compactRequested && compactor) {
-        const compacted = await compactor.compactHistory(transcript.conversation, activeRequest);
+        const compacted = await compactor.compactHistory(transcript.conversation, activeRequest, userRetentionTokens);
         if (compacted.compaction) {
           compactTranscript(transcript, compacted.compaction);
           modelMessages = transcript.messages;

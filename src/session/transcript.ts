@@ -23,6 +23,8 @@ export type SessionEvent =
       type: "compaction";
       message: ChatMessage;
       firstKeptSeq: number | null;
+      /** user 消息保留边界：缺省或 null = 全部保留（旧行为）；否则只保留 seq >= 该值的 user。 */
+      firstKeptUserSeq?: number | null;
     })
   | (SessionEventBase & {
       /** 回滚：丢弃 seq > to 的有效事件，rollback 事件本身仍保留在日志中。 */
@@ -83,10 +85,16 @@ function isAssistantMessageEvent(event: SessionEvent): boolean {
   return isMessageEvent(event) && event.message.role === "assistant";
 }
 
-/** 压缩时判定一条投影消息是否保留：用户消息永不压缩掉；其余按 firstKeptSeq 阈值保留。 */
-function isKeptAfterCompaction(item: ProjectedMessage, firstKeptSeq: number | null): boolean {
+/** 压缩时判定一条投影消息是否保留：user 按 firstKeptUserSeq 保留（null = 全部保留）；其余按 firstKeptSeq 阈值保留。 */
+function isKeptAfterCompaction(
+  item: ProjectedMessage,
+  firstKeptSeq: number | null,
+  firstKeptUserSeq: number | null,
+): boolean {
   if (item.sourceSeq === null) return false;
-  if (item.message.role === "user") return true;
+  if (item.message.role === "user") {
+    return firstKeptUserSeq === null || item.sourceSeq >= firstKeptUserSeq;
+  }
   return firstKeptSeq !== null && item.sourceSeq >= firstKeptSeq;
 }
 
@@ -114,7 +122,8 @@ function projectEvents(events: readonly SessionEvent[]): ProjectedMessage[] {
       projected.push({ message: event.message, sourceSeq: event.seq });
     } else if (event.type === "compaction") {
       const firstKeptSeq = event.firstKeptSeq;
-      const kept = projected.filter((item) => isKeptAfterCompaction(item, firstKeptSeq));
+      const firstKeptUserSeq = event.firstKeptUserSeq ?? null;
+      const kept = projected.filter((item) => isKeptAfterCompaction(item, firstKeptSeq, firstKeptUserSeq));
       projected = [{ message: event.message, sourceSeq: null }, ...kept];
     } else if (event.type === "messageCancelled") {
       projected = projected.map((item) =>
@@ -239,8 +248,12 @@ export class Transcript {
         : prepareMessage({ role: "system", content });
   }
 
-  /** 追加压缩事件；firstKeptSeq 为 null 表示全部摘要、不保留原始消息。 */
-  compact(summaryMessage: ChatMessage, firstKeptSeq: number | null): void {
+  /** 追加压缩事件；firstKeptSeq 为 null 表示非 user 全部摘要；firstKeptUserSeq 为 null 表示保留全部 user。 */
+  compact(
+    summaryMessage: ChatMessage,
+    firstKeptSeq: number | null,
+    firstKeptUserSeq: number | null = null,
+  ): void {
     if (summaryMessage.role === "system") {
       throw new Error("Compaction summary cannot be a system message");
     }
@@ -252,6 +265,14 @@ export class Transcript {
         throw new Error(`Compaction boundary is not in the current context: ${firstKeptSeq}`);
       }
     }
+    if (firstKeptUserSeq !== null) {
+      if (!Number.isInteger(firstKeptUserSeq) || firstKeptUserSeq <= 0 || firstKeptUserSeq > this.lastSeq) {
+        throw new Error(`Invalid compaction user boundary: ${firstKeptUserSeq}`);
+      }
+      if (!this.projected.some((item) => item.sourceSeq === firstKeptUserSeq && item.message.role === "user")) {
+        throw new Error(`Compaction user boundary is not a kept user message: ${firstKeptUserSeq}`);
+      }
+    }
 
     const prepared = prepareMessage(summaryMessage);
     const event: SessionEvent = {
@@ -260,9 +281,10 @@ export class Transcript {
       timestamp: new Date().toISOString(),
       message: prepared,
       firstKeptSeq,
+      firstKeptUserSeq,
     };
     this.commit(event);
-    const kept = this.projected.filter((item) => isKeptAfterCompaction(item, firstKeptSeq));
+    const kept = this.projected.filter((item) => isKeptAfterCompaction(item, firstKeptSeq, firstKeptUserSeq));
     this.projected = [{ message: prepared, sourceSeq: null }, ...kept];
   }
 

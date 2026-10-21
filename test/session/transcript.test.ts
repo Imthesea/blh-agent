@@ -186,4 +186,14 @@ describe("projectMessages", () => {
     ];
     expect(projectMessages(events)).toEqual([user("a"), user("b"), user("c")]);
   });
+
+  it("compaction 携带 firstKeptUserSeq 时裁掉旧 user 原文", () => {
+    const events: SessionEvent[] = [
+      { type: "message", seq: 1, timestamp: "a", message: user("old") },
+      { type: "message", seq: 2, timestamp: "b", message: assistant("a1") },
+      { type: "message", seq: 3, timestamp: "c", message: user("recent") },
+      { type: "compaction", seq: 4, timestamp: "d", message: user("summary"), firstKeptSeq: null, firstKeptUserSeq: 3 },
+    ];
+    expect(projectMessages(events)).toEqual([user("summary"), user("recent")]);
+  });
 });
