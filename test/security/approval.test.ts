@@ -45,7 +45,7 @@ describe("makePermissionHook（结构化 asker）", () => {
     const userIdx = rules.findIndex((r) => r.target === "ls -la");
     expect(userIdx).toBeGreaterThanOrEqual(0);
     expect(denyIdx).toBeLessThan(userIdx);
-    expect(persisted).toEqual([{ tool: "bash", target: "ls -la", action: "allow" }]);
+    expect(persisted).toEqual([{ tool: "bash", target: "ls -la", action: "allow", exact: true }]);
   });
 
   it("always_allow 且 target 为空时退化为放行、不写规则", async () => {

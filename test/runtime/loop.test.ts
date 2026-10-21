@@ -458,6 +458,7 @@ describe("agentLoop 压缩集成", () => {
 describe("agentLoop planning 集成", () => {
   it("连续三轮未更新 todo 后注入 reminder", async () => {
     const todoManager = new TodoManager();
+    todoManager.update([{ content: "a", status: "pending" }]);
     const script: ChatMessage[] = [];
     for (let i = 0; i < 3; i++) {
       script.push(makeToolCallMessage("echo", { text: "x" }, `call_${i + 1}`));
@@ -1041,15 +1042,8 @@ describe("agentLoop tracing", () => {
       .map((l) => JSON.parse(l) as Record<string, unknown>);
   }
 
-  function readLedgerCount(dir: string): number {
-    const file = path.join(dir, ".blh", "usage.jsonl");
-    if (!existsSync(file)) return 0;
-    return readFileSync(file, "utf-8")
-      .split("\n")
-      .filter((l) => l.trim() !== "").length;
-  }
 
-  it("完整一轮：事件序列 turn_start/llm/tool/llm/turn_end，账本记 2 行", async () => {
+  it("完整一轮：事件序列 turn_start/llm/tool/llm/turn_end，llm 事件均带 usage", async () => {
     const { tracer, dir } = makeTracer();
     const harness = makeHarness(
       [makeToolCallMessage("echo", { text: "hi" }), makeTextMessage("done")],
@@ -1072,7 +1066,11 @@ describe("agentLoop tracing", () => {
     const end = events[4]!;
     expect(end["iterations"]).toBe(2);
     expect(end["tools_used"]).toBe(1);
-    expect(readLedgerCount(dir)).toBe(2);
+    const llmEvents = events.filter((e) => e["type"] === "llm");
+    expect(llmEvents.length).toBe(2);
+    for (const l of llmEvents) {
+      expect(l["usage"]).toEqual({ promptTokens: 10, completionTokens: 5 });
+    }
   });
 
   it("goal 决策产生 goal 事件（block + achieved）", async () => {
@@ -1241,7 +1239,6 @@ describe("agentLoop tracing", () => {
     await harness.runTurn(harness.newTranscript(), "go");
     const llm = readTrace(dir).find((event) => event["type"] === "llm");
     expect(llm?.["usage"]).toBeNull();
-    expect(readLedgerCount(dir)).toBe(0);
   });
 });
 
@@ -1338,5 +1335,50 @@ describe("摘要进 system prompt（Z）", () => {
     expect(system?.content).toContain("history summary");
     const conversation = payload.filter((m) => m.role !== "system");
     expect(conversation.some((m) => (m.content ?? "").includes("history summary"))).toBe(false);
+  });
+});
+
+describe("agentLoop 回合熔断（stalled）", () => {
+  it("连续相同 bash 命令且输出未变时自动结束回合", async () => {
+    const harness = makeHarness(
+      Array.from({ length: 6 }, (_, i) =>
+        makeToolCallMessage("bash", { command: "same-cmd" }, `call_${i}`),
+      ),
+      {
+        tools: [{
+          name: "bash",
+          description: "bash",
+          parameters: { type: "object" },
+          handler: async (args) => `result:${String(args.command)}`,
+        }],
+      },
+    );
+    const transcript = harness.newTranscript();
+    const result = await runAgentLoop(harness, transcript, "go");
+    expect(result.status).toBe("stalled");
+    expect(result.iterations).toBe(5);
+  });
+
+  it("不同命令会重置计数，不误伤正常回合", async () => {
+    const harness = makeHarness(
+      [
+        makeToolCallMessage("bash", { command: "a" }, "call_0"),
+        makeToolCallMessage("bash", { command: "b" }, "call_1"),
+        makeToolCallMessage("bash", { command: "a" }, "call_2"),
+        makeToolCallMessage("bash", { command: "b" }, "call_3"),
+        makeTextMessage("done"),
+      ],
+      {
+        tools: [{
+          name: "bash",
+          description: "bash",
+          parameters: { type: "object" },
+          handler: async (args) => `result:${String(args.command)}`,
+        }],
+      },
+    );
+    const transcript = harness.newTranscript();
+    const result = await runAgentLoop(harness, transcript, "go");
+    expect(result.status).toBe("completed");
   });
 });

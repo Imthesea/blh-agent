@@ -420,7 +420,7 @@ export class ContextCompactor {
   static userRetentionIndex(messages: readonly ChatMessage[], userRetentionTokens: number): number | null {
     const userIndexes: number[] = [];
     for (let i = 0; i < messages.length; i++) {
-      if (messages[i]?.role === "user") userIndexes.push(i);
+      if (messages[i]?.role === "user" && messages[i]?.isInternal !== true) userIndexes.push(i);
     }
     if (userIndexes.length === 0) return null;
     // 至少保留最新一条 user（即使它单条就超预算）。

@@ -97,7 +97,7 @@ export function makePermissionHook(
       source,
     });
     if (decision === "always_allow" && target !== "") {
-      const rule: PermissionRule = { tool, target, action: "allow" };
+      const rule: PermissionRule = { tool, target, action: "allow", exact: true };
       insertUserRule(rules, rule);
       persistRule?.(rule);
       log.debug("always allowed", { tool, target });

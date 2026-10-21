@@ -46,14 +46,31 @@ describe("TodoManager", () => {
 
   it("noteRound counts and resets", () => {
     const tm = new TodoManager();
+    tm.update([{ content: "a", status: "pending" }]);
     expect(tm.noteRound(false)).toBeNull(); // 1
     expect(tm.noteRound(false)).toBeNull(); // 2
     expect(tm.noteRound(false)).toBe("<reminder>Update your todos.</reminder>");
     expect(tm.noteRound(false)).toBeNull(); // 重置后回到 1
   });
 
+  it("noteRound 无未完成项时永不提醒", () => {
+    const tm = new TodoManager();
+    tm.update([{ content: "a", status: "completed" }]);
+    for (let i = 0; i < 5; i++) {
+      expect(tm.noteRound(false)).toBeNull();
+    }
+  });
+
+  it("noteRound 空列表永不提醒", () => {
+    const tm = new TodoManager();
+    for (let i = 0; i < 5; i++) {
+      expect(tm.noteRound(false)).toBeNull();
+    }
+  });
+
   it("noteRound resets on used todo", () => {
     const tm = new TodoManager();
+    tm.update([{ content: "a", status: "pending" }]);
     tm.noteRound(false); // 1
     tm.noteRound(false); // 2
     expect(tm.noteRound(true)).toBeNull(); // 重置

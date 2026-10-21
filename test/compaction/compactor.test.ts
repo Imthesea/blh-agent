@@ -708,4 +708,12 @@ describe("userRetentionIndex", () => {
   it("预算为 0 时只保留最新一条 user", () => {
     expect(ContextCompactor.userRetentionIndex([userMsg("old"), userMsg("new")], 0)).toBe(1);
   });
+
+  it("跳过 isInternal 的 user 消息", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "reminder", isInternal: true },
+      userMsg("real"),
+    ];
+    expect(ContextCompactor.userRetentionIndex(messages, 100000)).toBe(1);
+  });
 });

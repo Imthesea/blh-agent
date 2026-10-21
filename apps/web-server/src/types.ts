@@ -36,6 +36,8 @@ export interface PermissionRule {
   tool: string;
   target: string;
   action: PermissionAction;
+  /** 精确匹配（whole-string equality），不做 glob。 */
+  exact?: boolean;
 }
 
 /** 会话事件（结构上对应根包的 SessionEvent；web-server 只透传、不解析业务语义）。 */

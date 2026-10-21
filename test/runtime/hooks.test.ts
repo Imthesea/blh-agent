@@ -61,12 +61,14 @@ describe("HookBus", () => {
     await expect(bus.trigger(PRE_TOOL_USE, bashPayload)).resolves.toEqual([null, "ok"]);
   });
 
-  it("firstBlock skips a throwing hook", async () => {
+  it("firstBlock 对抛错的 hook 失败关闭（阻断而非放行）", async () => {
     const bus = new HookBus();
     bus.register(PRE_TOOL_USE, async () => {
       throw new Error("boom");
     });
     bus.register(PRE_TOOL_USE, async () => "denied");
-    await expect(bus.firstBlock(PRE_TOOL_USE, bashPayload)).resolves.toBe("denied");
+    const result = await bus.firstBlock(PRE_TOOL_USE, bashPayload);
+    expect(result).toContain("denied");
+    expect(result).toContain("boom");
   });
 });

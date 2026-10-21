@@ -38,6 +38,12 @@ describe("matchRule", () => {
     expect(matchRule([], "bash", "ls")).toBe("ask");
   });
 
+  it("exact 规则按字面量精确匹配，不做 glob", () => {
+    const rules = [{ tool: "bash", target: 'node x.mjs "[a-z]*"', action: "allow" as const, exact: true }];
+    expect(matchRule(rules, "bash", 'node x.mjs "[a-z]*"')).toBe("allow");
+    expect(matchRule(rules, "bash", 'node x.mjs "[XXX]"')).toBe("ask");
+  });
+
   it("matches tool name via fnmatch", () => {
     const rules = [{ tool: "read_*", target: "*", action: "deny" as const }];
     expect(matchRule(rules, "read_file", "x")).toBe("deny");

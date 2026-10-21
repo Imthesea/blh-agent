@@ -47,6 +47,12 @@ export class TodoManager {
   }
 
   noteRound(usedTodo: boolean): string | null {
+    // 无未完成项时不提醒（避免 todo 已完成/空列表时还刷 <reminder>）
+    const hasOpen = this.items.some((t) => t.status !== "completed");
+    if (!hasOpen) {
+      this.roundsSinceTodo = 0;
+      return null;
+    }
     this.roundsSinceTodo = usedTodo ? 0 : this.roundsSinceTodo + 1;
     if (this.roundsSinceTodo >= 3) {
       this.roundsSinceTodo = 0;

@@ -54,10 +54,10 @@ export class HookBus {
         const result = await fn(payload);
         if (result !== null) return result;
       } catch (error) {
-        log.warn("hook error", {
-          event,
-          error: error instanceof Error ? error.message : String(error),
-        });
+        const message = error instanceof Error ? error.message : String(error);
+        // 安全类 hook（pre_tool_use）失败关闭：抛错视为阻断，不能放行。
+        log.error("permission hook failed, blocking", { event, error: message });
+        return `denied: ${event} hook failed (${message})`;
       }
     }
     return null;

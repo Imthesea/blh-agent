@@ -13,7 +13,14 @@ export function fnmatch(name: string, pattern: string): boolean {
       const inner = match.slice(negation ? 2 : 1, -1);
       return `[${negation ? "^" : ""}${inner.replace(/\\/g, "\\\\")}]`;
     });
-  return new RegExp(`^${source}$`).test(name);
+  let regex: RegExp;
+  try {
+    regex = new RegExp(`^${source}$`);
+  } catch {
+    // 字符类 range 倒序等非法 glob 无法编译成正则：降级为字面量精确匹配，避免抛出。
+    return name === pattern;
+  }
+  return regex.test(name);
 }
 
 async function* walk(root: string): AsyncGenerator<string> {

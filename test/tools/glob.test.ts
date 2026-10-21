@@ -35,6 +35,15 @@ describe("fnmatch", () => {
     expect(fnmatch("foo[abc", "foo[abc")).toBe(true);
     expect(fnmatch("fooX", "foo[abc")).toBe(false);
   });
+
+  it("does not throw on invalid character-class range and falls back to literal match", async () => {
+    const { fnmatch } = await import("../../src/tools/glob.js");
+    // 真实回归：always_allow 存的命令含 [a-z0-9\-/]，被当 glob 会编译崩溃
+    const cmd = 'node x.mjs "[a-z0-9\\-/]*/"';
+    expect(() => fnmatch(cmd, cmd)).not.toThrow();
+    expect(fnmatch(cmd, cmd)).toBe(true);
+    expect(fnmatch('node x.mjs "[abc]"', cmd)).toBe(false);
+  });
 });
 
 describe("glob", () => {

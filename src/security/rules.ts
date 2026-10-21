@@ -6,6 +6,8 @@ export interface PermissionRule {
   tool: string;
   target: string;
   action: PermissionAction;
+  /** 精确匹配（whole-string equality），不做 glob。用于 always_allow 存的完整命令。 */
+  exact?: boolean;
 }
 
 export const DEFAULT_RULES: PermissionRule[] = [
@@ -29,7 +31,8 @@ export function matchRule(
 ): PermissionAction {
   for (const rule of rules) {
     if (rule.tool !== "*" && !fnmatch(tool, rule.tool)) continue;
-    if (fnmatch(target, rule.target)) return rule.action;
+    const targetMatches = rule.exact === true ? target === rule.target : fnmatch(target, rule.target);
+    if (targetMatches) return rule.action;
   }
   return "ask";
 }

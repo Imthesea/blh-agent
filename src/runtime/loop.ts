@@ -64,7 +64,7 @@ export interface AgentLoopProfile {
 /** agent 主循环跑完一轮后的结果。 */
 export interface AgentLoopResult {
   /** 结束状态：正常完成 / 被用户中断 / 达到最大轮数。 */
-  status: "completed" | "cancelled" | "max_turns";
+  status: "completed" | "cancelled" | "max_turns" | "stalled";
   /** 实际执行的迭代次数。 */
   iterations: number;
   /** 最后一条 assistant 消息；可能为 null。 */
@@ -77,6 +77,8 @@ const MAX_REACTIVE_RETRIES = 1;
 /** 组合根未注入窗口/输出上限时的保守兜底（子 agent / 队友走这里）。 */
 const FALLBACK_CONTEXT_WINDOW = 8192;
 const FALLBACK_MAX_OUTPUT_TOKENS = 4096;
+/** 默认回合熔断上限（可被 profile.maxTurns 覆盖）。 */
+const DEFAULT_MAX_TURNS = 100;
 /** 留给回答的余量：window - prompt - SAFETY_BUFFER_TOKENS 即 answerLimit 上限。 */
 const SAFETY_BUFFER_TOKENS = 1024;
 /** answerLimit 低于此值视为预算被压到底（正常路径不该发生），仅告警。 */
@@ -155,12 +157,17 @@ export async function runAgentLoop(
   let reactiveRetries = 0;
   let iterations = 0;
   let modelMessages: readonly ChatMessage[] = transcript.messages;
+  // B3：重复命令熔断状态（连续相同的非后台 bash 命令 + 相同输出）
+  let lastBashKey = "";
+  let lastBashOutput = "";
+  let consecutiveBashRepeats = 0;
   // 流式失败时保留的半成品文字，用于彻底失败时落盘，避免白写内容丢失。
   let streamPartial = "";
   const contextWindow = harness.contextWindow ?? FALLBACK_CONTEXT_WINDOW;
   const maxOutputTokens = harness.maxOutputTokens ?? FALLBACK_MAX_OUTPUT_TOKENS;
   const promptBudget = computePromptBudget(contextWindow, maxOutputTokens);
   const model = harness.config.model;
+  const maxTurns = profile.maxTurns ?? DEFAULT_MAX_TURNS;
 
   if (events !== undefined) await events.emit({ type: "turn_start" });
   harness.tracer?.beginTurn(activeRequest);
@@ -177,7 +184,7 @@ export async function runAgentLoop(
       if (signal?.aborted) {
         return cancelTurnAborted(harness, transcript, events, iterations);
       }
-      if (profile.maxTurns !== undefined && iterations >= profile.maxTurns) {
+      if (iterations >= maxTurns) {
         harness.tracer?.endTurn("max_turns");
         if (events !== undefined) await events.emit({ type: "turn_end" });
         return {
@@ -497,6 +504,31 @@ export async function runAgentLoop(
           tool_call_id: call.id,
           content: result,
         });
+
+        // B3：重复命令熔断——连续相同的非后台 bash 命令 + 相同输出视为停滞
+        if (name === "bash" && !background) {
+          const cmd = String(input["command"] ?? "").trim();
+          if (cmd !== "" && cmd === lastBashKey && result === lastBashOutput) {
+            consecutiveBashRepeats += 1;
+          } else {
+            consecutiveBashRepeats = 1;
+            lastBashKey = cmd;
+            lastBashOutput = result;
+          }
+          if (consecutiveBashRepeats >= 5) {
+            log.warn("turn stalled on repeated command", { tool: name, repeats: consecutiveBashRepeats });
+            harness.tracer?.endTurn("stalled");
+            if (events !== undefined) await events.emit({ type: "turn_end" });
+            return {
+              status: "stalled",
+              iterations,
+              finalAssistant: lastAssistantMessage(transcript.messages),
+            };
+          }
+        } else {
+          lastBashKey = "";
+          consecutiveBashRepeats = 0;
+        }
       }
 
       // 第 7 步：工具执行后的收尾——中断检查、todo 提醒、主动压缩。
