@@ -94,7 +94,7 @@ describe("MemoryExtractor", () => {
     expect(store.listMemoryFiles()).toEqual([]);
   });
 
-  it("extractMemories swallows provider error", async () => {
+  it("extractMemories throws on provider error", async () => {
     const store = new MemoryStore(path.join(tmpDir, ".memory"));
     class Boom implements ChatProvider {
       async chat(): Promise<ChatMessage> {
@@ -102,7 +102,7 @@ describe("MemoryExtractor", () => {
       }
     }
     const extractor = new MemoryExtractor(store, new Boom());
-    expect(await extractor.extractMemories([{ role: "user", content: "hi" }])).toBe(0);
+    await expect(extractor.extractMemories([{ role: "user", content: "hi" }])).rejects.toThrow("api down");
   });
 
   it("consolidateMemories below threshold", async () => {

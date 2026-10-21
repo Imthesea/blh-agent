@@ -27,7 +27,7 @@ export class Memory {
     readonly provider: ChatProvider,
     readonly tracer?: Tracer,
   ) {
-    this.recall = new MemoryRecall(store, provider, tracer);
+    this.recall = new MemoryRecall(store, tracer);
     this.extractor = new MemoryExtractor(store, provider, tracer);
     this.dream = new MemoryDream(store);
   }
@@ -52,6 +52,22 @@ export class Memory {
    */
   async extract(messages: ChatMessage[]): Promise<number> {
     return this.extractor.extractMemories(messages);
+  }
+  /**
+   * 从带 seq 的消息里，只提取「游标之后」的新消息（幂等补写）：
+   * 成功后推进游标；提取失败则抛错且不推进游标，下次重做同一批。
+   */
+  async deriveFromSession(sessionFile: string, messagesWithIds: readonly ChatMessage[]): Promise<number> {
+    const lastSeq = this.store.readExtractSeq(sessionFile);
+    const fresh = messagesWithIds.filter((m) => {
+      const seq = m.id !== undefined ? Number(m.id) : Number.NaN;
+      return Number.isInteger(seq) && seq > lastSeq;
+    });
+    if (fresh.length === 0) return 0;
+    const stored = await this.extract(fresh);
+    const maxSeq = fresh.reduce((max, m) => Math.max(max, Number(m.id)), lastSeq);
+    this.store.writeExtractSeq(sessionFile, maxSeq);
+    return stored;
   }
 
   /**

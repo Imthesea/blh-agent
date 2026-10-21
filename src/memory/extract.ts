@@ -157,8 +157,8 @@ export class MemoryExtractor {
       this.tracer?.event("memory", { action: "extract", new_facts: stored });
       return stored;
     } catch (error) {
-      log.warn("extraction skipped", { error: error instanceof Error ? error.message : String(error) });
-      return 0;
+      log.warn("extraction failed", { error: error instanceof Error ? error.message : String(error) });
+      throw error;
     }
   }
 

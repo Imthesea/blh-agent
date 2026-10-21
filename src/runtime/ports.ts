@@ -136,6 +136,8 @@ export interface MemoryPort {
   systemSection(messages: readonly ChatMessage[]): Promise<string>;
   /** 从当前对话提取值得长期保存的记忆。 */
   extract(messages: readonly ChatMessage[]): Promise<boolean | number>;
+  /** 从带 seq 的消息里，只提取游标之后的新消息（幂等补写，失败抛错不推进游标）。 */
+  deriveFromSession(sessionFile: string, messagesWithIds: readonly ChatMessage[]): Promise<number>;
   /** 合并整理已有记忆（去重、纠错）。 */
   consolidate(): Promise<boolean | number>;
 }

@@ -13,6 +13,8 @@ export const TEMPORARY_MEMORY_MARKERS = [
 ] as const;
 
 export const INDEX_NAME = "MEMORY.md";
+/** 记忆提取游标状态文件名（{ 会话文件名: 已提取到的最大 seq }）。 */
+export const EXTRACT_STATE_NAME = ".extract-state.json";
 
 export class MemoryStore {
   readonly directory: string;
@@ -284,6 +286,31 @@ export class MemoryStore {
    * @param filename 记忆文件名。
    * @returns 文件内容字符串；如果文件名非法或文件读取失败（如不存在），返回 null。
    */
+  /** 读取某会话文件「已提取到的最大 seq」；无记录或读失败返回 0。 */
+  readExtractSeq(sessionFile: string): number {
+    let state: Record<string, unknown>;
+    try {
+      state = JSON.parse(readFileSync(path.join(this.directory, EXTRACT_STATE_NAME), "utf-8")) as Record<string, unknown>;
+    } catch {
+      return 0;
+    }
+    const value = state[sessionFile];
+    return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : 0;
+  }
+
+  /** 记录某会话文件「已提取到的最大 seq」（原子性要求不高：覆盖写即可）。 */
+  writeExtractSeq(sessionFile: string, seq: number): void {
+    mkdirSync(this.directory, { recursive: true });
+    let state: Record<string, unknown>;
+    try {
+      state = JSON.parse(readFileSync(path.join(this.directory, EXTRACT_STATE_NAME), "utf-8")) as Record<string, unknown>;
+    } catch {
+      state = {};
+    }
+    state[sessionFile] = seq;
+    writeFileSync(path.join(this.directory, EXTRACT_STATE_NAME), JSON.stringify(state), "utf-8");
+  }
+
   readMemoryFile(filename: string): string | null {
     let filePath: string;
     try {

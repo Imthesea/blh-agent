@@ -28,6 +28,8 @@ export class Harness implements AgentLoopRuntime {
   readonly systemPrompt: string;
   /** 会话留档入口；仅 REPL 注入，-p 模式为 undefined（不落盘）。 */
   sessionStore?: SessionStorePort;
+  /** 后台记忆写入串行链：extract/consolidate 只在这里排队，不阻塞回合返回。 */
+  private memoryWriteChain: Promise<void> = Promise.resolve();
   /** 创建一个 Harness：把所有依赖串起来，并组装系统提示词。 */
   constructor(
     readonly config: Config,
@@ -124,12 +126,28 @@ export class Harness implements AgentLoopRuntime {
       }
       await agentLoop(this, transcript, text, events, signal);
       await this.hooks.trigger(STOP, {});
-      if (this.memory && (await this.memory.extract(transcript.messages))) {
-        await this.memory.consolidate();
-      }
+      this.scheduleMemoryWrite(transcript.messagesWithIds);
     } finally {
       unbind();
     }
+  }
+
+  /** 后台串行执行「按会话游标提取 + 合并」：不阻塞回合返回；失败游标不动，下一轮重做同一批。 */
+  private scheduleMemoryWrite(messagesWithIds: readonly ChatMessage[]): void {
+    const memory = this.memory;
+    const sessionStore = this.sessionStore;
+    if (memory === undefined || sessionStore === undefined) return;
+    const sessionFile = path.basename(sessionStore.path);
+    const snapshot = messagesWithIds.slice();
+    this.memoryWriteChain = this.memoryWriteChain.then(async () => {
+      try {
+        if (await memory.deriveFromSession(sessionFile, snapshot)) {
+          await memory.consolidate();
+        }
+      } catch {
+        // 提取失败：游标未推进，下一轮会重做同一批
+      }
+    });
   }
 
   /** 跑一轮定时任务：取出到期的定时任务注入对话，执行一轮 agentLoop；出错或被打断就回滚并重新排队。 */

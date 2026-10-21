@@ -1,7 +1,7 @@
-import type { ChatMessage, ChatProvider } from "../contracts/types.js";
+import type { ChatMessage } from "../contracts/types.js";
 import type { Tracer } from "../tracing/tracer.js";
 import type { MemoryRecord, MemoryStore } from "./store.js";
-import { extractJsonArray, messageText } from "./text.js";
+import { messageText } from "./text.js";
 
 export class MemoryRecall {
   /** 单次召回最多能塞进上下文的总字符数（默认 20000）。 */
@@ -16,7 +16,6 @@ export class MemoryRecall {
    */
   constructor(
     private readonly store: MemoryStore,
-    private readonly provider: ChatProvider,
     private readonly tracer?: Tracer,
   ) {}
 
@@ -96,54 +95,11 @@ export class MemoryRecall {
     if (!records.length || !query) {
       return [];
     }
-
-    const catalog = records
-      .map((record, index) => {
-        const name = record.name.split(/\s+/).filter((part) => part !== "").join(" ");
-        const description = record.description.split(/\s+/).filter((part) => part !== "").join(" ");
-        return `${index}: ${name} - ${description}`;
-      })
-      .join("\n");
-    const prompt =
-      "选出与当前用户请求相关的记忆记录。 " +
-      "只返回一个 JSON 数组，包含目录下标，例如 [0, 2]。 " +
-      "如果没有相关的，返回 []。\n\n" +
-      `当前请求：\n${query}\n\n记忆目录：\n${catalog.slice(0, 12000)}`;
-    try {
-      const response = await this.provider.chat([{ role: "user", content: prompt }], [], 200);
-      const indices = extractJsonArray(messageText(response));
-      const selected: string[] = [];
-      for (const index of indices) {
-        if (typeof index === "number" && Number.isInteger(index) && index >= 0 && index < records.length) {
-          const record = records[index];
-          if (record === undefined) {
-            continue;
-          }
-          if (!selected.includes(record.filename)) {
-            selected.push(record.filename);
-          }
-          if (selected.length === maxItems) {
-            break;
-          }
-        }
-      }
-      return selected;
-    } catch {
-      return this.keywordMemorySelection(records, query, maxItems);
-    }
+    // 召回是记忆目录的纯函数（关键词匹配），不再为此发起模型调用：
+    // 否则每条消息都会在正式回合开始前多付一次前置模型调用。
+    return this.keywordMemorySelection(records, query, maxItems);
   }
 
-  /**
-   * 读取选中的相关记忆文件内容，拼成一个 JSON 字符串。
-   * @param messages 当前对话消息列表。
-   * @returns 一个 JSON 字符串（数组，每项含 source 文件名和 content 内容）；
-   *  没有相关记忆或达到字符上限时返回空字符串。
-   *
-   * 规则：
-   *  1. 先调用 selectRelevantMemories 选出相关文件名；
-   *  2. 逐个读文件内容，按剩余字符额度截断（总长度不超过 recallCharLimit）；
-   *  3. 额度用完或读不到内容就跳过。
-   */
   async loadMemories(messages: ChatMessage[]): Promise<string> {
     const loaded: { source: string; content: string }[] = [];
     let remaining = this.recallCharLimit;

@@ -25,6 +25,7 @@
     ["compaction", "tracing"],
     ["extensions", "tools"],
     ["jobs", "tools"],
+    ["memory", "tools"],
     ["memory", "tracing"],
     ["planning", "tools"],
     ["security", "tools"],

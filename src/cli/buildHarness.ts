@@ -31,6 +31,7 @@ import { MessageBus } from "../agents/bus.js";
 import { SubagentRunner } from "../agents/subagent.js";
 import { TeamRuntime } from "../agents/team.js";
 import { registerAgentTools } from "../agents/tools.js";
+import { registerMemoryTools } from "../memory/tools.js";
 import { SkillLoader } from "../extensions/skills.js";
 import { MCPRegistry } from "../extensions/mcp.js";
 import type { ChatProvider, McpServerConfig } from "../contracts/types.js";
@@ -160,6 +161,7 @@ export function buildHarness(
   // 创建记忆系统：负责「读记忆（召回）」和「写记忆（提取）」。
   // 记忆数据落在 .memory 目录下，用同一个 provider 来做召回/提取时的模型调用。
   const memory = new Memory(new MemoryStore(path.join(config.workdir, ".memory")), provider, tracer);
+  registerMemoryTools(tools, memory.store);
 
   // 创建定时任务调度器，并从磁盘恢复之前保存的定时任务。
   const cron = new CronScheduler(path.join(config.workdir, ".scheduled_tasks.json"));

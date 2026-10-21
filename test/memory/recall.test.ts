@@ -2,41 +2,21 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { ChatMessage, ChatProvider, ToolDefinition } from "../../src/contracts/types.js";
+import type { ChatMessage } from "../../src/contracts/types.js";
 import { MemoryRecall } from "../../src/memory/recall.js";
 import { MemoryStore } from "../../src/memory/store.js";
 import { Tracer } from "../../src/tracing/tracer.js";
 
-class MockProvider implements ChatProvider {
-  readonly requests: { messages: ChatMessage[]; tools: ToolDefinition[]; maxTokens: number | undefined }[] = [];
-  private readonly scripted: ChatMessage[];
-
-  constructor(scripted: ChatMessage[]) {
-    this.scripted = [...scripted];
-  }
-
-  async chat(messages: ChatMessage[], tools: ToolDefinition[], maxTokens?: number): Promise<ChatMessage> {
-    this.requests.push({ messages, tools, maxTokens });
-    const next = this.scripted.shift();
-    if (!next) {
-      throw new Error("MockProvider exhausted");
-    }
-    return next;
-  }
-}
-
 let tmpDir: string;
-
 beforeEach(() => {
   tmpDir = mkdtempSync(path.join(os.tmpdir(), "memory-recall-"));
 });
-
 afterEach(() => {
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
-function makeRecall(provider?: ChatProvider): MemoryRecall {
-  return new MemoryRecall(new MemoryStore(path.join(tmpDir, ".memory")), provider ?? new MockProvider([]));
+function makeRecall(): MemoryRecall {
+  return new MemoryRecall(new MemoryStore(path.join(tmpDir, ".memory")));
 }
 
 describe("MemoryRecall", () => {
@@ -60,26 +40,14 @@ describe("MemoryRecall", () => {
     expect(recall.keywordMemorySelection(records, "what indentation style", 5)).toEqual(["a.md"]);
   });
 
-  it("selectRelevantMemories uses model", async () => {
+  it("selectRelevantMemories 用关键词选择（不再调模型）", async () => {
     const store = new MemoryStore(path.join(tmpDir, ".memory"));
     store.writeMemoryFile("Indent", "user", "Use tabs", "Tabs not spaces.");
-    const provider = new MockProvider([{ role: "assistant", content: "[0]" }]);
-    const recall = new MemoryRecall(store, provider);
-    expect(await recall.selectRelevantMemories([{ role: "user", content: "what indent" }])).toEqual(["indent.md"]);
-    expect(provider.requests[0]?.maxTokens).toBe(200);
-  });
-
-  it("selectRelevantMemories falls back to keywords", async () => {
-    const store = new MemoryStore(path.join(tmpDir, ".memory"));
-    store.writeMemoryFile("Indent", "user", "Use tabs", "Tabs not spaces.");
-    class Boom implements ChatProvider {
-      async chat(): Promise<ChatMessage> {
-        throw new Error("api down");
-      }
-    }
-    const recall = new MemoryRecall(store, new Boom());
-    const messages: ChatMessage[] = [{ role: "user", content: "what indent style" }];
-    expect(await recall.selectRelevantMemories(messages)).toEqual(["indent.md"]);
+    store.writeMemoryFile("Color", "user", "Prefer blue", "Blue is nice.");
+    const recall = new MemoryRecall(store);
+    expect(
+      await recall.selectRelevantMemories([{ role: "user", content: "what indent" }]),
+    ).toEqual(["indent.md"]);
   });
 
   it("selectRelevantMemories no records", async () => {
@@ -89,10 +57,9 @@ describe("MemoryRecall", () => {
   it("loadMemories limits chars", async () => {
     const store = new MemoryStore(path.join(tmpDir, ".memory"));
     store.writeMemoryFile("A", "user", "desc a", "x".repeat(100));
-    const provider = new MockProvider([{ role: "assistant", content: "[0]" }]);
-    const recall = new MemoryRecall(store, provider);
+    const recall = new MemoryRecall(store);
     recall.recallCharLimit = 10;
-    const loaded = await recall.loadMemories([{ role: "user", content: "hi" }]);
+    const loaded = await recall.loadMemories([{ role: "user", content: "desc" }]);
     const parsed = JSON.parse(loaded) as { source: string; content: string }[];
     expect(parsed[0]?.content).toHaveLength(10);
   });
@@ -104,7 +71,7 @@ describe("MemoryRecall", () => {
   it("buildSystem with index and relevant", () => {
     const store = new MemoryStore(path.join(tmpDir, ".memory"));
     store.writeMemoryFile("Indent", "user", "Use tabs", "Tabs.");
-    const recall = new MemoryRecall(store, new MockProvider([]));
+    const recall = new MemoryRecall(store);
     const section = recall.buildSystem('{"source": "indent.md"}');
     expect(section).toContain("记忆目录：");
     expect(section).toContain("相关记忆记录：");
@@ -115,20 +82,19 @@ describe("MemoryRecall", () => {
 describe("MemoryRecall（trace 事件）", () => {
   it("loadMemories 记录 recall 事件（hits 为选中条数）", async () => {
     const store = new MemoryStore(path.join(tmpDir, ".memory"));
-    store.writeMemoryFile("Pref", "user", "use tabs", "indent with tabs");
+    store.writeMemoryFile("Indent", "user", "use tabs for indentation", "tabs not spaces");
     const tracer = new Tracer(tmpDir);
-    const recall = new MemoryRecall(
-      store,
-      new MockProvider([{ role: "assistant", content: "[0]" }]),
-      tracer,
-    );
+    const recall = new MemoryRecall(store, tracer);
     const out = await recall.loadMemories([{ role: "user", content: "what indentation?" }]);
     expect(out).not.toBe("");
     const dir = path.join(tmpDir, ".blh", "traces");
     const events = readdirSync(dir)
       .filter((f) => f.endsWith(".jsonl"))
       .flatMap((f) =>
-        readFileSync(path.join(dir, f), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>),
+        readFileSync(path.join(dir, f), "utf8")
+          .split("\n")
+          .filter(Boolean)
+          .map((l) => JSON.parse(l) as Record<string, unknown>),
       );
     expect(events).toEqual([expect.objectContaining({ type: "memory", action: "recall", hits: 1 })]);
   });

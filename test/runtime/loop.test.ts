@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -521,12 +521,12 @@ describe("runTurn memory 集成", () => {
     const store = new MemoryStore(path.join(tmpDir, ".memory"));
     store.writeMemoryFile("Indent", "user", "Use tabs", "Tabs not spaces.");
     const provider = new MockProvider([
-      { role: "assistant", content: "[0]" }, // recall 选择
       makeTextMessage("done"), // 主循环
-      { role: "assistant", content: "[]" }, // extract
+      { role: "assistant", content: "[]" }, // 后台 extract
     ]);
     const memory = new Memory(store, provider);
     const harness = makeHarness([], { memory, provider });
+    harness.sessionStore = { path: path.join(tmpDir, ".sessions", "session_1.jsonl"), appendEvent: () => {} };
     const transcript = harness.newTranscript();
     await harness.runTurn(transcript, "what indent style do I prefer");
     expect(transcript.messages[0]?.content).toContain("相关记忆记录：");
@@ -547,20 +547,23 @@ describe("runTurn memory 集成", () => {
     ]);
     const memory = new Memory(store, provider);
     const harness = makeHarness([], { memory, provider });
+    harness.sessionStore = { path: path.join(tmpDir, ".sessions", "session_1.jsonl"), appendEvent: () => {} };
     const transcript = harness.newTranscript();
     await harness.runTurn(transcript, "I prefer tabs");
-    expect(store.readMemoryFile("pref.md")).not.toBeNull();
+    await vi.waitFor(() => {
+      expect(store.readMemoryFile("pref.md")).not.toBeNull();
+    });
   });
 
-  it("runTurn consolidates after extract", async () => {
+  it("runTurn 后台按会话游标派生记忆并合并", async () => {
     class FakeMemory {
-      extracted: ChatMessage[] | null = null;
+      derived: { sessionFile: string; messages: ChatMessage[] } | null = null;
       consolidated = false;
       async systemSection(_messages: ChatMessage[]): Promise<string> {
         return "";
       }
-      async extract(messages: ChatMessage[]): Promise<number> {
-        this.extracted = messages;
+      async deriveFromSession(sessionFile: string, messages: ChatMessage[]): Promise<number> {
+        this.derived = { sessionFile, messages };
         return 1;
       }
       async consolidate(): Promise<number> {
@@ -572,9 +575,13 @@ describe("runTurn memory 集成", () => {
     const harness = makeHarness([makeTextMessage("done")], {
       memory: memory as unknown as Memory,
     });
+    harness.sessionStore = { path: path.join(tmpDir, ".sessions", "session_1.jsonl"), appendEvent: () => {} };
     await harness.runTurn(harness.newTranscript(), "hi");
-    expect(memory.extracted).not.toBeNull();
-    expect(memory.consolidated).toBe(true);
+    await vi.waitFor(() => {
+      expect(memory.derived).not.toBeNull();
+      expect(memory.derived?.sessionFile).toBe("session_1.jsonl");
+      expect(memory.consolidated).toBe(true);
+    });
   });
 });
 
