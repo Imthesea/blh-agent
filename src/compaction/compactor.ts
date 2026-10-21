@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readSync, statSync, writeFileSync } from "node:fs";
 import * as path from "node:path";
 import type { ChatMessage, ChatProvider } from "../contracts/types.js";
 import type { PreparedContext } from "../runtime/ports.js";
@@ -7,6 +7,22 @@ import { createLogger } from "@blh/logger";
 import type { Tracer } from "../tracing/tracer.js";
 
 const log = createLogger("compaction.compactor");
+
+/** 有界读取文件头：只读前 maxChars*4 字节（UTF-8 单字符上限），返回文本与实读字节数。 */
+export function readFileHead(file: string, maxChars: number): { text: string; bytesRead: number } {
+  const size = statSync(file).size;
+  const len = Math.min(size, maxChars * 4);
+  if (len <= 0) return { text: "", bytesRead: 0 };
+  const buf = Buffer.alloc(len);
+  const fd = openSync(file, "r");
+  let n: number;
+  try {
+    n = readSync(fd, buf, 0, len, 0);
+  } finally {
+    closeSync(fd);
+  }
+  return { text: buf.subarray(0, n).toString("utf8").slice(0, maxChars), bytesRead: n };
+}
 
 /** 摘要模型用的系统提示：只要求提炼「事实状态」，并明确禁止执行对话里的指令。 */
 export const SUMMARY_SYSTEM =
@@ -138,7 +154,7 @@ export class ContextCompactor {
       // 已经是落盘占位：直接复用路径，预览从文件里读前 previewChars 字。
       filePath = savedPath;
       try {
-        preview = readFileSync(savedPath, "utf8").slice(0, previewChars);
+        preview = readFileHead(savedPath, previewChars).text;
       } catch {
         preview = output.slice(0, previewChars);
       }

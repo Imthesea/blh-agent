@@ -2,7 +2,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "n
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ContextCompactor } from "../../src/compaction/compactor.js";
+import { ContextCompactor, readFileHead } from "../../src/compaction/compactor.js";
 import { estimateContextTokens, estimateTextTokens } from "../../src/contracts/estimate.js";
 import { Tracer } from "../../src/tracing/tracer.js";
 import type {
@@ -715,5 +715,52 @@ describe("userRetentionIndex", () => {
       userMsg("real"),
     ];
     expect(ContextCompactor.userRetentionIndex(messages, 100000)).toBe(1);
+  });
+});
+
+describe("readFileHead 有界读", () => {
+  function tmp(): string {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "blh-head-"));
+    return dir;
+  }
+
+  it("大文件只读前 maxChars*4 字节，不整读", () => {
+    const dir = tmp();
+    const file = path.join(dir, "big.txt");
+    writeFileSync(file, "a".repeat(10_000_000)); // 10MB
+    const { text, bytesRead } = readFileHead(file, 2000);
+    expect(text).toBe("a".repeat(2000));
+    expect(bytesRead).toBe(2000 * 4);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("小文件整读", () => {
+    const dir = tmp();
+    const file = path.join(dir, "small.txt");
+    writeFileSync(file, "hello");
+    const { text, bytesRead } = readFileHead(file, 2000);
+    expect(text).toBe("hello");
+    expect(bytesRead).toBe(5);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("多字节字符不截断出乱码", () => {
+    const dir = tmp();
+    const file = path.join(dir, "cjk.txt");
+    writeFileSync(file, "中".repeat(3000)); // 9000 字节 > 8000
+    const { text, bytesRead } = readFileHead(file, 2000);
+    expect(text).toBe("中".repeat(2000));
+    expect(bytesRead).toBe(2000 * 4);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("空文件返回空", () => {
+    const dir = tmp();
+    const file = path.join(dir, "empty.txt");
+    writeFileSync(file, "");
+    const { text, bytesRead } = readFileHead(file, 2000);
+    expect(text).toBe("");
+    expect(bytesRead).toBe(0);
+    rmSync(dir, { recursive: true, force: true });
   });
 });
