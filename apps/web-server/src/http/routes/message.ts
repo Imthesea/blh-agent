@@ -20,11 +20,8 @@ export async function handleMessageRoutes(
       sendJson(res, 400, { error: "text is required" });
       return true;
     }
-    const handle = ctx.session.list()[0];
-    if (handle === undefined) {
-      sendJson(res, 400, { error: "no active session" });
-      return true;
-    }
+    // 无活跃会话时惰性新建（维持「始终有活跃会话」不变量），避免首次发送被 400 拒绝。
+    const handle = ctx.session.list()[0] ?? (await ctx.session.create(ctx.workdir));
     ctx.session.runTurn(handle.id, text).catch((error: unknown) => {
       log.error("run turn failed", { id: handle.id }, error);
       ctx.broadcaster.broadcast({

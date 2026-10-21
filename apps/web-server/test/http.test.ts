@@ -12,7 +12,7 @@ import type { ChatMessage, TranscriptLike, TurnLock, WebTurnRunner } from "../sr
 import type { Server } from "node:http";
 import { makeTestSessionStore, makeTranscript } from "./helpers.js";
 
-async function makeContext(workdir: string): Promise<WebContext> {
+async function makeContext(workdir: string, createSession = true): Promise<WebContext> {
   const broadcaster = new SSEBroadcaster();
   const approvals = new ApprovalCoordinator((event) => broadcaster.broadcast(event));
   const runner: WebTurnRunner = {
@@ -25,7 +25,7 @@ async function makeContext(workdir: string): Promise<WebContext> {
   const lock: TurnLock = { withLock: async <T,>(fn: () => Promise<T>) => fn() };
   const sessionStore = makeTestSessionStore();
   const session = new SessionManager(runner, lock, (event) => broadcaster.broadcast(event), approvals, sessionStore);
-  await session.create(workdir);
+  if (createSession) await session.create(workdir);
   return { session, broadcaster, workdir, staticDir: null, sessionStore };
 }
 
@@ -73,6 +73,25 @@ describe("http 路由", () => {
     const s = (await (await fetch(`${url}/api/session`)).json()) as {
       messages: Array<{ content: string | null }>;
     };
+    expect(s.messages.map((m: { content: string | null }) => m.content)).toContain("reply:hi");
+  });
+
+  it("POST /api/message 无活跃会话时自动新建会话并处理消息", async () => {
+    const ctx = makeContext(tmpDir, false);
+    const { server, url } = await listen(ctx);
+    servers.push(server);
+    const res = await fetch(`${url}/api/message`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-blh-web": "1" },
+      body: JSON.stringify({ text: "hi" }),
+    });
+    expect(res.status).toBe(202);
+    await new Promise((r) => setTimeout(r, 20));
+    const s = (await (await fetch(`${url}/api/session`)).json()) as {
+      sessionId: string | null;
+      messages: Array<{ content: string | null }>;
+    };
+    expect(s.sessionId).not.toBeNull();
     expect(s.messages.map((m: { content: string | null }) => m.content)).toContain("reply:hi");
   });
 
