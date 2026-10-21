@@ -540,6 +540,17 @@ button, input, select, textarea { font-family: inherit; }
   word-break: break-word;
   margin-bottom: 8px;
 }
+.thinking-reasoning {
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-tertiary);
+  font-style: italic;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin-bottom: 8px;
+  padding-left: 8px;
+  border-left: 2px solid var(--dsw-alias-border-l2);
+}
 .thinking-body .tool-card { margin-bottom: 8px; }
 .thinking-body .tool-card:last-child { margin-bottom: 0; }
 

@@ -14,6 +14,7 @@ function msg(p: {
   name?: string;
   cancelled?: boolean;
   isInternal?: boolean;
+  reasoning_content?: string;
 }): UiMessage {
   const m: UiMessage = { role: p.role, content: p.content ?? null, id: p.id ?? `m${++seq}` };
   if (p.tool_calls !== undefined) m.tool_calls = p.tool_calls;
@@ -21,6 +22,7 @@ function msg(p: {
   if (p.name !== undefined) m.name = p.name;
   if (p.cancelled !== undefined) m.cancelled = p.cancelled;
   if (p.isInternal !== undefined) m.isInternal = p.isInternal;
+  if (p.reasoning_content !== undefined) m.reasoning_content = p.reasoning_content;
   return m;
 }
 
@@ -107,5 +109,37 @@ describe("groupMessages", () => {
     );
     const turn = turnAt(blocks, 0);
     expect(turn.final?.cancelled).toBe(true);
+  });
+
+  it("assistant 的 reasoning_content 渲染成 thinking 文本步骤", () => {
+    const blocks = groupMessages(
+      [msg({ role: "user", content: "hi" }), msg({ role: "assistant", content: "答案", reasoning_content: "先想一下" })],
+      null,
+    );
+    const turn = turnAt(blocks, 0);
+    expect(turn.final?.content).toBe("答案");
+    expect(turn.thinking).toHaveLength(1);
+    expect(turn.thinking[0]).toMatchObject({ kind: "reasoning", text: "先想一下" });
+  });
+
+  it("中间 assistant 与最终回复的 reasoning_content 都进 thinking，正文不重复", () => {
+    const blocks = groupMessages(
+      [
+        msg({ role: "user", content: "run" }),
+        msg({
+          role: "assistant",
+          content: null,
+          reasoning_content: "要用工具",
+          tool_calls: [{ id: "c1", type: "function", function: { name: "bash", arguments: "{}" } }],
+        }),
+        msg({ role: "tool", tool_call_id: "c1", name: "bash", content: "ok" }),
+        msg({ role: "assistant", content: "done", reasoning_content: "总结一下" }),
+      ],
+      null,
+    );
+    const turn = turnAt(blocks, 0);
+    const texts = turn.thinking.filter((x) => x.kind === "reasoning").map((x) => x.text);
+    expect(texts).toEqual(["要用工具", "总结一下"]);
+    expect(turn.final?.content).toBe("done");
   });
 });

@@ -1,18 +1,5 @@
-import type { UiMessage } from "../hooks/useAgentEvents";
+import type { ThinkingStep, UiMessage } from "../hooks/useAgentEvents";
 import { classifyToolOutcome } from "@blh/web-protocol";
-
-/** 思考框内的一步：中间文本，或一次工具调用。 */
-export interface ThinkingStep {
-  id: string;
-  kind: "text" | "tool";
-  /** kind === "text" 时的内容 */
-  text?: string;
-  /** kind === "tool" 时的工具名 / 参数 / 结果 */
-  name?: string;
-  arguments?: string;
-  output?: string;
-  isError?: boolean;
-}
 
 /** 一次用户提问的完整展示块：用户气泡（可能为 null）+ 思考过程 + 最终回复。 */
 export interface TurnBlock {
@@ -54,9 +41,14 @@ function buildTurn(seg: UiMessage[]): TurnBlock {
   const thinking: ThinkingStep[] = [];
   const pendingTools = new Map<string, ThinkingStep>();
   for (let i = 0; i < body.length; i++) {
-    if (i === finalIdx) continue;
     const m = body[i]!;
     if (m.role === "assistant") {
+      // 思维链（reasoning_content）无论是不是最终回复，都属于 thinking 面板；先想后说，故排在 content 之前。
+      const reasoning = (m.reasoning_content ?? "").trim();
+      if (reasoning !== "") {
+        thinking.push({ id: nextId(), kind: "reasoning", text: reasoning });
+      }
+      if (i === finalIdx) continue;
       const text = (m.content ?? "").trim();
       if (text !== "") {
         thinking.push({ id: nextId(), kind: "text", text });

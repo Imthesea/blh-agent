@@ -29,6 +29,8 @@ export interface ToolCall {
 export interface ChatMessage {
   role: "system" | "user" | "assistant" | "tool";
   content: string | null;
+  /** 该条 assistant 消息的思维链（DeepSeek/Qwen/Kimi 的 reasoning_content）：不在正文气泡显示，单独进 thinking 面板。 */
+  reasoning_content?: string;
   tool_calls?: ToolCall[];
   tool_call_id?: string;
   name?: string;
@@ -117,5 +119,6 @@ export interface ChatUsage {
 /** Provider 底层流事件：text/tool_call 是增量，done 是拼好的完整消息 */
 export type ProviderStreamEvent =
   | { type: "text_delta"; text: string }
+  | { type: "reasoning_delta"; text: string }
   | { type: "tool_call_delta"; index: number; id?: string; name?: string; arguments?: string }
   | { type: "done"; message: ChatMessage; usage?: ChatUsage };

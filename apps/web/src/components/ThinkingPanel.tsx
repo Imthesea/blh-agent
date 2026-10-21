@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { ThinkingStep } from "./turns";
+import type { ThinkingStep } from "../hooks/useAgentEvents";
 import { ToolCallCard } from "./ToolCallCard";
 
 export function ThinkingPanel({ steps, active }: { steps: ThinkingStep[]; active: boolean }) {
@@ -37,15 +37,23 @@ export function ThinkingPanel({ steps, active }: { steps: ThinkingStep[]; active
       </button>
       {expanded && steps.length > 0 && (
         <div className="thinking-body" ref={bodyRef}>
-          {steps.map((s) =>
-            s.kind === "text" ? (
-              <div key={s.id} className="thinking-text">
-                {s.text}
-              </div>
-            ) : (
-              <ToolCallCard key={s.id} step={s} />
-            ),
-          )}
+          {steps.map((s) => {
+            if (s.kind === "reasoning") {
+              return (
+                <div key={s.id} className="thinking-reasoning">
+                  {s.text}
+                </div>
+              );
+            }
+            if (s.kind === "text") {
+              return (
+                <div key={s.id} className="thinking-text">
+                  {s.text}
+                </div>
+              );
+            }
+            return <ToolCallCard key={s.id} step={s} />;
+          })}
         </div>
       )}
     </div>

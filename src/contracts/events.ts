@@ -4,6 +4,8 @@ export type AgentEvent =
   | { type: "turn_start" }
   /** 模型流式输出的一段文字增量，直接原样写终端。 */
   | { type: "assistant_text_delta"; text: string }
+  /** 模型流式输出的思维链增量（reasoning_content），转发给前端 thinking 面板。 */
+  | { type: "assistant_reasoning_delta"; text: string }
   /** 流式中断后由非流式兜底的完整回复，整体打印。 */
   | { type: "assistant_text_complete"; text: string }
   /** 模型要调用工具：id 是调用标识，name 是工具名，arguments 是序列化后的参数。 */

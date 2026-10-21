@@ -40,8 +40,11 @@ function toOpenAIMessage(message: ChatMessage): OpenAI.ChatCompletionMessagePara
       return {
         role: "assistant",
         content: message.content,
+        // DeepSeek 官方要求：带 tools 的请求必须回传历史 assistant 的 reasoning_content，
+        // 即使该轮没有思维链也必须带 key（缺失会 400）。空串对 openai 兼容系 provider 无害。
+        reasoning_content: message.reasoning_content ?? "",
         ...(message.tool_calls?.length ? { tool_calls: message.tool_calls } : {}),
-      };
+      } as OpenAI.ChatCompletionAssistantMessageParam & { reasoning_content?: string };
     case "tool":
       return { role: "tool", content, tool_call_id: message.tool_call_id ?? "" };
   }
@@ -51,6 +54,7 @@ function fromOpenAIMessage(
   message: OpenAI.ChatCompletionMessage,
   finishReason?: string | null,
 ): ChatMessage {
+  const reasoning = (message as OpenAI.ChatCompletionMessage & { reasoning_content?: string }).reasoning_content;
   const toolCalls: ToolCall[] = [];
   for (const call of message.tool_calls ?? []) {
     // 防御 custom tool call 联合类型：本项目只使用 function tool
@@ -64,6 +68,7 @@ function fromOpenAIMessage(
   return {
     role: "assistant",
     content: message.content,
+    ...(reasoning ? { reasoning_content: reasoning } : {}),
     ...(toolCalls.length ? { tool_calls: toolCalls } : {}),
     // 仅截断原因才上报，避免污染消息形状（"stop" 等正常原因不携带该字段）。
     ...(finishReason === "length" ? { finishReason: "length" } : {}),
@@ -213,6 +218,7 @@ export class OpenAICompatProvider implements ChatProvider {
     );
 
     let text = "";
+    let reasoning = "";
     const calls = new Map<number, { id: string; name: string; arguments: string }>();
     let usage: ChatUsage | undefined;
     let finishReason: string | null = null;
@@ -222,6 +228,11 @@ export class OpenAICompatProvider implements ChatProvider {
       if (delta?.content) {
         text += delta.content;
         yield { type: "text_delta", text: delta.content };
+      }
+      const reasoningDelta = (delta as { reasoning_content?: string } | undefined)?.reasoning_content;
+      if (reasoningDelta) {
+        reasoning += reasoningDelta;
+        yield { type: "reasoning_delta", text: reasoningDelta };
       }
       for (const tc of delta?.tool_calls ?? []) {
         const acc = calls.get(tc.index) ?? { id: "", name: "", arguments: "" };
@@ -256,6 +267,7 @@ export class OpenAICompatProvider implements ChatProvider {
     const message: ChatMessage = {
       role: "assistant",
       content: text || null,
+      ...(reasoning !== "" ? { reasoning_content: reasoning } : {}),
       ...(toolCalls.length ? { tool_calls: toolCalls } : {}),
       ...(finishReason === "length" ? { finishReason: "length" } : {}),
     };

@@ -1,4 +1,4 @@
-import type { ThinkingStep } from "./turns";
+import type { ThinkingStep } from "../hooks/useAgentEvents";
 
 /** 把工具参数渲染成更可读的预览：bash 直接显示命令，其余尽量展示关键字段。 */
 function formatArguments(name: string, raw: string): string {

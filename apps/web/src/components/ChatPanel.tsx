@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ApprovalRequest, LiveStep, UiMessage } from "../hooks/useAgentEvents";
+import type { ApprovalRequest, ThinkingStep, UiMessage } from "../hooks/useAgentEvents";
 import { groupMessages } from "./turns";
 import { ThinkingPanel } from "./ThinkingPanel";
 
@@ -25,7 +25,7 @@ function Checkpoint({ summary }: { summary: string }) {
 export function ChatPanel(props: {
   messages: UiMessage[];
   summary: string | null;
-  steps: LiveStep[];
+  steps: ThinkingStep[];
   busy: boolean;
   approval: ApprovalRequest | null;
 }) {

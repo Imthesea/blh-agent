@@ -20,11 +20,11 @@ const log = createLogger("web.app");
 /** 连接中断时展示的提示文案。 */
 const RECONNECT_MESSAGE = "连接中断，正在自动重连…";
 
-/** 直播过程中的一个有序步骤：一段文本，或一次工具调用。 */
-export interface LiveStep {
+/** thinking 面板里的一个步骤：中间文本、模型思维链（reasoning），或一次工具调用。live 与落盘重放共用。 */
+export interface ThinkingStep {
   id: string;
-  kind: "text" | "tool";
-  /** kind === "text" 时的内容 */
+  kind: "text" | "reasoning" | "tool";
+  /** kind === "text" / "reasoning" 时的内容 */
   text?: string;
   /** kind === "tool" 时的工具名 / 参数 / 结果 */
   name?: string;
@@ -65,7 +65,7 @@ function toUiMessage(m: ChatMessage): UiMessage {
 export interface AgentState {
   messages: UiMessage[];
   summary: string | null;
-  steps: LiveStep[];
+  steps: ThinkingStep[];
   approval: ApprovalRequest | null;
   error: string | null;
   busy: boolean;
@@ -85,7 +85,7 @@ export interface AgentState {
 export function useAgentEvents(): AgentState {
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [summary, setSummary] = useState<string | null>(null);
-  const [steps, setSteps] = useState<LiveStep[]>([]);
+  const [steps, setSteps] = useState<ThinkingStep[]>([]);
   const [approval, setApproval] = useState<ApprovalRequest | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -153,6 +153,15 @@ export function useAgentEvents(): AgentState {
                 return [...prev.slice(0, -1), { ...last, text: (last.text ?? "") + event.text }];
               }
               return [...prev, { id: nextStepId(), kind: "text", text: event.text }];
+            });
+            break;
+          case "assistant_reasoning_delta":
+            setSteps((prev) => {
+              const last = prev[prev.length - 1];
+              if (last !== undefined && last.kind === "reasoning") {
+                return [...prev.slice(0, -1), { ...last, text: (last.text ?? "") + event.text }];
+              }
+              return [...prev, { id: nextStepId(), kind: "reasoning", text: event.text }];
             });
             break;
           case "assistant_text_complete":

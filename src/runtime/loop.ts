@@ -622,6 +622,8 @@ async function streamAssistantMessage(
       if (event.type === "text_delta") {
         partialText += event.text;
         await events.emit({ type: "assistant_text_delta", text: event.text });
+      } else if (event.type === "reasoning_delta") {
+        await events.emit({ type: "assistant_reasoning_delta", text: event.text });
       } else if (event.type === "done") {
         return { message: event.message, usage: event.usage ?? null };
       }

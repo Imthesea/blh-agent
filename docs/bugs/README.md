@@ -22,3 +22,4 @@
 - [2026-10-21 权限 hook 崩溃 + fail-open](./2026-10-21-hook-fail-open.md)
 - [2026-10-21 todo 提醒无界注入 + 回合失控](./2026-10-21-todo-reminder-and-runaway-turn.md)
 - [2026-10-21 成本恒 0：价格表缺新模型且静默返回 null](./2026-10-21-cost-zero-unknown-model.md)
+- [2026-10-22 DeepSeek thinking 消失：reasoning_content 全链路未透传](./2026-10-22-deepseek-reasoning-dropped.md)

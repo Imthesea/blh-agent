@@ -119,6 +119,47 @@ describe("OpenAICompatProvider", () => {
       signal: controller.signal,
     });
   });
+  it("captures reasoning_content on non-streaming chat", async () => {
+    const { OpenAICompatProvider } = await import("../../src/providers/openai-compat.js");
+    const create = vi.fn().mockResolvedValue({
+      choices: [{ message: { role: "assistant", content: "答案", reasoning_content: "思考" } }],
+    });
+    const provider = new OpenAICompatProvider(config, makeClient(create));
+    const result = await provider.chat([{ role: "user", content: "hi" }], [echoTool]);
+    expect(result).toEqual({ role: "assistant", content: "答案", reasoning_content: "思考" });
+  });
+
+  it("echoes reasoning_content back on assistant messages, defaulting to empty string", async () => {
+    const { OpenAICompatProvider } = await import("../../src/providers/openai-compat.js");
+    const create = vi.fn().mockResolvedValue({
+      choices: [{ message: { role: "assistant", content: "ok" } }],
+    });
+    const provider = new OpenAICompatProvider(config, makeClient(create));
+    await provider.chat(
+      [
+        { role: "user", content: "hi" },
+        { role: "assistant", content: "答", reasoning_content: "想" },
+      ],
+      [echoTool],
+    );
+    expect(create.mock.calls[0]?.[0].messages[1]).toEqual({
+      role: "assistant",
+      content: "答",
+      reasoning_content: "想",
+    });
+    await provider.chat(
+      [
+        { role: "user", content: "x" },
+        { role: "assistant", content: "无" },
+      ],
+      [echoTool],
+    );
+    expect(create.mock.calls[1]?.[0].messages[1]).toEqual({
+      role: "assistant",
+      content: "无",
+      reasoning_content: "",
+    });
+  });
 });
 
 describe("OpenAICompatProvider.stream", () => {
@@ -184,6 +225,34 @@ describe("OpenAICompatProvider.stream", () => {
       },
     });
     expect(events.filter((e) => e.type === "tool_call_delta")).toHaveLength(3);
+  });
+
+  it("streams reasoning_content deltas and folds them into done message", async () => {
+    const { OpenAICompatProvider } = await import("../../src/providers/openai-compat.js");
+    const chunks = [
+      { choices: [{ index: 0, delta: { reasoning_content: "思考" } }] },
+      { choices: [{ index: 0, delta: { reasoning_content: "中" } }] },
+      { choices: [{ index: 0, delta: { content: "答案" } }] },
+      { choices: [] },
+    ];
+    const create = vi.fn().mockResolvedValue(
+      (async function* () {
+        for (const c of chunks) yield c;
+      })(),
+    );
+    const provider = new OpenAICompatProvider(config, makeClient(create));
+    const events = [];
+    for await (const event of provider.stream([{ role: "user", content: "hi" }], [echoTool])) {
+      events.push(event);
+    }
+    expect(events.filter((e) => e.type === "reasoning_delta")).toEqual([
+      { type: "reasoning_delta", text: "思考" },
+      { type: "reasoning_delta", text: "中" },
+    ]);
+    expect(events.find((e) => e.type === "done")).toEqual({
+      type: "done",
+      message: { role: "assistant", content: "答案", reasoning_content: "思考中" },
+    });
   });
 });
 
