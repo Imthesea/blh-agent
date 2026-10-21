@@ -6,10 +6,7 @@ import {
   type TraceOverview,
   type UsageBucket,
 } from "@blh/web-client";
-
-function fmtLatency(ms: number | null): string {
-  return ms !== null ? `${(ms / 1000).toFixed(1)}s` : "—";
-}
+import { collectApprovals, fmtLatency, slowestTurns } from "./observe-utils";
 
 function CostTable(props: { title: string; buckets: Record<string, UsageBucket> }) {
   const rows = Object.entries(props.buckets).sort(([a], [b]) => (a < b ? -1 : 1));
@@ -34,16 +31,6 @@ function CostTable(props: { title: string; buckets: Record<string, UsageBucket> 
       </table>
     </section>
   );
-}
-
-function collectApprovals(turns: FoldedTurn[]): TraceEvent[] {
-  const out: TraceEvent[] = [];
-  for (const t of turns) {
-    for (const e of t.events) {
-      if (e.type === "approval") out.push(e);
-    }
-  }
-  return out;
 }
 
 export function OpsPage() {
@@ -96,10 +83,7 @@ export function OpsPage() {
   const approvals = collectApprovals(turns);
   const allowCount = approvals.filter((e) => e.decision === "allow").length;
   const denyCount = approvals.filter((e) => e.decision === "deny").length;
-  const slowest = [...turns]
-    .filter((t) => t.latencyMs !== null)
-    .sort((a, b) => (b.latencyMs ?? 0) - (a.latencyMs ?? 0))
-    .slice(0, 10);
+  const slowest = slowestTurns(turns);
 
   return (
     <div className="observe-page">

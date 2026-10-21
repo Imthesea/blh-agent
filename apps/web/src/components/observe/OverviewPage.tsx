@@ -1,22 +1,17 @@
 import { useCallback, useEffect, useState } from "react";
 import { traceApi, type TraceOverview } from "@blh/web-client";
+import { recentCostBars } from "./observe-utils";
 
 /** 近 14 天成本条形图（纯 CSS，无图表依赖）。 */
 function CostBars(props: { byDay: Record<string, { costUsd: number }> }) {
-  const days = Object.entries(props.byDay)
-    .sort(([a], [b]) => (a < b ? -1 : 1))
-    .slice(-14);
-  if (days.length === 0) return <p className="observe-empty">暂无成本数据</p>;
-  const max = days.reduce((m, [, b]) => Math.max(m, b.costUsd), 0);
+  const bars = recentCostBars(props.byDay, 14);
+  if (bars.length === 0) return <p className="observe-empty">暂无成本数据</p>;
   return (
     <div className="cost-bars">
-      {days.map(([day, b]) => (
-        <div className="cost-bar-col" key={day} title={`${day} $${b.costUsd.toFixed(4)}`}>
-          <div
-            className="cost-bar"
-            style={{ height: `${max > 0 ? Math.max(2, Math.round((b.costUsd / max) * 100)) : 2}%` }}
-          />
-          <span className="cost-bar-label">{day.slice(5)}</span>
+      {bars.map((bar) => (
+        <div className="cost-bar-col" key={bar.day} title={`${bar.day} $${bar.costUsd.toFixed(4)}`}>
+          <div className="cost-bar" style={{ height: `${bar.heightPercent}%` }} />
+          <span className="cost-bar-label">{bar.day.slice(5)}</span>
         </div>
       ))}
     </div>
