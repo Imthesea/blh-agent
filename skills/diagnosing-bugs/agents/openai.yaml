@@ -1,0 +1,4 @@
+interface:
+  display_name: "缺陷诊断"
+  short_description: "诊断疑难 bug 和性能回归"
+  default_prompt: "使用 $diagnosing-bugs 帮我诊断这个 bug 或性能回归。"

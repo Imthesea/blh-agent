@@ -1,0 +1,4 @@
+interface:
+  display_name: "Skill Creator"
+  short_description: "创建、改进并评测 skill"
+  default_prompt: "使用 $skill-creator 帮我创建或改进一个 skill，并跑评测。"

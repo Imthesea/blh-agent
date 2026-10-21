@@ -1,0 +1,4 @@
+interface:
+  display_name: "边界审查"
+  short_description: "加功能前审查数据会不会只增不减，防止越用越卡。"
+  default_prompt: "使用 $boundary-check，审查这个新功能读/算/展示的数据是否存在无限膨胀风险，并跑一遍反模式扫描。"

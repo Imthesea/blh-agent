@@ -1,0 +1,58 @@
+{
+  "skill_name": "boundary-check",
+  "evals": [
+    {
+      "id": 1,
+      "kind": "trigger-positive",
+      "prompt": "给 blh 加一个操作日志查看页面。",
+      "expected_output": "触发该 skill；先跑 scan-boundary.mjs 扫描，再按 5 步清单审查，给出增量机制或上限要求。",
+      "assertions": [
+        "使用了 boundary-check skill",
+        "跑了 scripts/scan-boundary.mjs",
+        "逐项给出 5 步清单结论",
+        "日志这种追加型数据必须走增量读"
+      ],
+      "files": []
+    },
+    {
+      "id": 2,
+      "kind": "trigger-positive",
+      "prompt": "新增一个会话历史导出功能。",
+      "expected_output": "触发该 skill；审查会话历史这种只增不减数据的读/算/展示方式。",
+      "assertions": [
+        "触发 boundary-check",
+        "识别出会话历史是追加型数据"
+      ],
+      "files": []
+    },
+    {
+      "id": 3,
+      "kind": "trigger-negative",
+      "prompt": "帮我修这个 bug。",
+      "expected_output": "不触发该 skill；应走 bug-fix。",
+      "assertions": ["没有调用 boundary-check"],
+      "files": []
+    },
+    {
+      "id": 4,
+      "kind": "trigger-negative",
+      "prompt": "把这段代码格式化一下。",
+      "expected_output": "不触发该 skill。",
+      "assertions": ["没有调用 boundary-check"],
+      "files": []
+    },
+    {
+      "id": 5,
+      "kind": "behavior",
+      "prompt": "给 blh 加一个日志查看功能。",
+      "expected_output": "跑反模式扫描；审查读/算/画/测试四项；不写 readFileSync 全量读；要求增量读 + 缓存脏标记 + 首载截尾。",
+      "assertions": [
+        "运行 scan-boundary.mjs",
+        "明确禁止全量读/全量算/全量画",
+        "给出增量读方案（offset/cursor）",
+        "要求补一条数据变多的测试用例"
+      ],
+      "files": []
+    }
+  ]
+}
