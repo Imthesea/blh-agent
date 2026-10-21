@@ -15,6 +15,7 @@ import { createLogger } from "@blh/logger";
 import { parseToolArguments } from "./parse-args.js";
 import type { AgentLoopRuntime, CompactionPlan, GoalEvaluationPort } from "./ports.js";
 import type { Transcript } from "../session/transcript.js";
+import { sanitizeReplay } from "../session/sanitize.js";
 
 const log = createLogger("runtime.loop");
 
@@ -201,7 +202,9 @@ export async function runAgentLoop(
 
       // 第 4 步：调用模型生成回复（优先流式，失败回退非流式）。
       const tools = harness.tools.list();
-      const rawPromptTokens = estimatePromptTokens(modelMessages, tools);
+      // replay 前清洗：纯读侧，只作用于本次发送载荷（R5）。
+      const requestMessages = sanitizeReplay(modelMessages);
+      const rawPromptTokens = estimatePromptTokens(requestMessages, tools);
       const estimatedPromptTokens = tokenEstimator.scale(model, rawPromptTokens);
       const answerLimit = computeAnswerLimit(contextWindow, maxOutputTokens, estimatedPromptTokens);
       if (answerLimit < MIN_ANSWER_TOKENS) {
@@ -217,7 +220,7 @@ export async function runAgentLoop(
           try {
             const streamed = await streamAssistantMessage(
               harness.provider,
-              modelMessages,
+              requestMessages,
               tools,
               events,
               signal,
@@ -248,7 +251,7 @@ export async function runAgentLoop(
               try {
                 const retried = await streamAssistantMessage(
                   harness.provider,
-                  modelMessages,
+                  requestMessages,
                   tools,
                   events,
                   signal,
@@ -263,7 +266,7 @@ export async function runAgentLoop(
                 streamPartial = partialText;
                 const response = await requestAssistantMessageComplete(
                   harness.provider,
-                  modelMessages,
+                  requestMessages,
                   tools,
                   events,
                   signal,
@@ -276,7 +279,7 @@ export async function runAgentLoop(
             } else {
               const response = await requestAssistantMessageComplete(
                 harness.provider,
-                modelMessages,
+                requestMessages,
                 tools,
                 events,
                 signal,
@@ -290,7 +293,7 @@ export async function runAgentLoop(
         } else {
           const response = await requestAssistantMessage(
             harness.provider,
-            modelMessages,
+            requestMessages,
             tools,
             signal,
             answerLimit,

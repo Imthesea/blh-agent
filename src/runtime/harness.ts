@@ -7,6 +7,7 @@ import type { EventBus } from "./events.js";
 import { runInScheduledTurn, runInDreamTurn } from "./security-context.js";
 import { Transcript } from "../session/transcript.js";
 import type { SessionEvent } from "../session/transcript.js";
+import { appendDailyLog } from "../session/daily-log.js";
 import * as path from "node:path";
 import { DEFAULT_SHUTDOWN_TIMEOUT_MS, type LifecycleManager } from "@blh/lifecycle";
 import type {
@@ -118,6 +119,13 @@ export class Harness implements AgentLoopRuntime {
     if (this.memory && (await this.memory.extract(transcript.messages))) {
       await this.memory.consolidate();
     }
+    this.logTurn(transcript.messages);
+  }
+
+  /** 会话留档：把一轮成功结束后的最终投影追加到 <sessions>/chat/<day>.md；仅在有 sessionStore 时写。 */
+  private logTurn(messages: readonly ChatMessage[]): void {
+    if (this.sessionStore === undefined) return;
+    appendDailyLog(path.dirname(this.sessionStore.path), messages);
   }
 
   /** 跑一轮定时任务：取出到期的定时任务注入对话，执行一轮 agentLoop；出错或被打断就回滚并重新排队。 */
@@ -149,6 +157,7 @@ export class Harness implements AgentLoopRuntime {
     }
     jobs.cron.acknowledge(fired);
     await this.hooks.trigger(STOP, {});
+    this.logTurn(transcript.messages);
   }
 
   /** dream 是否到期（无记忆系统时恒 false）。 */
@@ -178,6 +187,7 @@ export class Harness implements AgentLoopRuntime {
       dream.applyTrash();
       dream.validateOutput();
       dream.markSuccess();
+      this.logTurn(transcript.messages);
       this.tracer?.event("job", { kind: "dream", status: "completed" });
     } catch (error) {
       dream.restore(snapshot);
@@ -201,5 +211,6 @@ export class Harness implements AgentLoopRuntime {
       agentLoop(this, transcript, "[team]", undefined, signal),
     );
     await this.hooks.trigger(STOP, {});
+    this.logTurn(transcript.messages);
   }
 }
