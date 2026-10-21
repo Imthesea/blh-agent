@@ -430,4 +430,19 @@ describe("SessionManager", () => {
     await runFailure;
     await expect(shutdown).resolves.toBeUndefined();
   });
+  it("remove 调用 onSessionDeleted 回调", async () => {
+    const deleted: string[] = [];
+    const manager = new SessionManager(
+      fakeRunner(),
+      fakeLock(),
+      () => {},
+      new ApprovalCoordinator(() => {}),
+      makeTestSessionStore(),
+      (file) => deleted.push(file),
+    );
+    const handle = await manager.create(tmpDir);
+    await manager.remove(tmpDir, path.basename(handle.file));
+    expect(deleted).toEqual([path.basename(handle.file)]);
+  });
+
 });

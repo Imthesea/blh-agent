@@ -6,6 +6,7 @@ import { buildHarness } from "./buildHarness.js";
 import { loadConfig } from "../config/config.js";
 import { SessionStore } from "../session/store.js";
 import { createTraceModule } from "../tracing/module.js";
+import { removeSessionArtifacts } from "../tracing/cleanup.js";
 
 /** 根包对 web-server 的 harness 工厂适配：把 web 侧注入转成 buildHarness 的位置参数。 */
 const buildHarnessForWeb: BuildHarness = (deps) =>
@@ -48,6 +49,7 @@ export function startWebServerFromCli(options: StartWebFromCliOptions) {
     buildHarness: buildHarnessForWeb,
     staticDir: staticDir(options.dev ?? false),
     trace: createTraceModule(config.workdir),
+    onSessionDeleted: (file) => removeSessionArtifacts(config.workdir, file),
     ...(options.port !== undefined ? { port: options.port } : {}),
     ...(options.skipPermissions !== undefined ? { skipPermissions: options.skipPermissions } : {}),
   });

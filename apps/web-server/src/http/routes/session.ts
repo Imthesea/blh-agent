@@ -96,6 +96,35 @@ export async function handleSessionRoutes(
     return true;
   }
 
+  // 按需导出会话为人类可读 markdown（A2：不再 eager 落盘 chat/{day}.md）
+  const exportMatch = /^\/api\/sessions\/(.+)\/export$/.exec(pathname);
+  if (method === "GET" && exportMatch !== null) {
+    let file: string;
+    try {
+      file = decodeURIComponent(exportMatch[1] ?? "");
+    } catch {
+      sendJson(res, 400, { error: "invalid session file" });
+      return true;
+    }
+    if (path.basename(file) !== file || file === "." || file === "..") {
+      sendJson(res, 400, { error: "invalid session file" });
+      return true;
+    }
+    const filePath = path.join(ctx.sessionStore.sessionsDir(ctx.workdir), file);
+    if (!existsSync(filePath)) {
+      sendJson(res, 404, { error: "session not found" });
+      return true;
+    }
+    try {
+      const markdown = ctx.sessionStore.renderMarkdown(filePath);
+      res.writeHead(200, { "Content-Type": "text/markdown; charset=utf-8" });
+      res.end(markdown);
+    } catch {
+      sendJson(res, 500, { error: "failed to export session" });
+    }
+    return true;
+  }
+
   const sessionMatch = /^\/api\/sessions\/(.+)$/.exec(pathname);
   if (method === "GET" && sessionMatch !== null) {
     let file: string;

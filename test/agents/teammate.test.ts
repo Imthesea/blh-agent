@@ -169,10 +169,10 @@ describe("TeammateRuntime", () => {
       "llm",
       "turn_end",
     ]);
-    expect(events.every((event) => event["sid"] === "teammate:bob")).toBe(true);
+    expect(events.every((event) => event["sid"] === "cli:teammate:bob")).toBe(true);
     const llmEvents = events.filter((event) => event["type"] === "llm");
     expect(llmEvents).toEqual([
-      expect.objectContaining({ sid: "teammate:bob", usage: { promptTokens: 13, completionTokens: 5 } }),
+      expect.objectContaining({ sid: "cli:teammate:bob", usage: { promptTokens: 13, completionTokens: 5 } }),
     ]);
   });
 

@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:f
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { appendRawEntry, createLogger, initLogger, resetLogger } from "../src/node.js";
+import { appendRawEntry, createLogger, flushPendingDedup, initLogger, resetLogger, setLogSid } from "../src/node.js";
 import { fileDate } from "../src/format.js";
 
 let tmpDir: string;
@@ -90,6 +90,108 @@ describe("node logger", () => {
       const content = readFileSync(file, "utf8");
       expect(content).toContain("shown");
       expect(content).not.toContain("hidden");
+    });
+  });
+});
+
+
+describe("文件 sink 去重", () => {
+  const logFile = (): string => path.join(tmpDir, ".blh", "logs", "blh-" + fileDate(new Date()) + ".log");
+
+  it("同一 error 窗口内只落第一条，flush 后补重复计数", async () => {
+    initLogger(tmpDir, "error");
+    const log = createLogger("x");
+    for (let i = 0; i < 5; i++) log.error("boom", {}, new Error("boom"));
+    const file = logFile();
+    await vi.waitFor(() => {
+      const lines = readFileSync(file, "utf8").split("\n").filter(Boolean);
+      expect(lines.length).toBe(1);
+      expect(lines[0]).toContain("boom: boom");
+    });
+    flushPendingDedup();
+    await vi.waitFor(() => {
+      expect(readFileSync(file, "utf8")).toContain("重复 4 次");
+    });
+  });
+
+  it("不同 fields 不去重", async () => {
+    initLogger(tmpDir, "warn");
+    const log = createLogger("x");
+    log.warn("fail", { n: 1 });
+    log.warn("fail", { n: 2 });
+    const file = logFile();
+    await vi.waitFor(() => {
+      const lines = readFileSync(file, "utf8").split("\n").filter(Boolean);
+      expect(lines.length).toBe(2);
+    });
+  });
+
+  it("info 级别不去重", async () => {
+    initLogger(tmpDir, "info");
+    const log = createLogger("x");
+    log.info("tick");
+    log.info("tick");
+    const file = logFile();
+    await vi.waitFor(() => {
+      const lines = readFileSync(file, "utf8").split("\n").filter(Boolean);
+      expect(lines.length).toBe(2);
+    });
+  });
+
+  it("resetLogger 清空去重状态", async () => {
+    initLogger(tmpDir, "error");
+    const log = createLogger("x");
+    log.error("boom", { n: 1 });
+    log.error("boom", { n: 1 });
+    resetLogger();
+    initLogger(tmpDir, "error");
+    createLogger("x").error("boom", { n: 1 });
+    const file = logFile();
+    await vi.waitFor(() => {
+      const lines = readFileSync(file, "utf8").split("\n").filter(Boolean);
+      expect(lines.length).toBe(2);
+    });
+  });
+
+  it("长字段落盘被截断", async () => {
+    initLogger(tmpDir, "info");
+    createLogger("x").info("big", { cmd: "a".repeat(1000) });
+    const file = logFile();
+    await vi.waitFor(() => {
+      const content = readFileSync(file, "utf8");
+      expect(content).toContain("…[truncated 488 chars]");
+      expect(content).not.toContain("a".repeat(513));
+    });
+  });
+});
+
+
+describe("sid 上下文", () => {
+  const logFile = (): string => path.join(tmpDir, ".blh", "logs", "blh-" + fileDate(new Date()) + ".log");
+
+  it("setLogSid 后落盘日志带 sid", async () => {
+    initLogger(tmpDir, "info");
+    setLogSid("session_x.jsonl");
+    createLogger("x").info("hello");
+    setLogSid(null);
+    const file = logFile();
+    await vi.waitFor(() => {
+      const line = JSON.parse(readFileSync(file, "utf8").split("\n").filter(Boolean)[0]!);
+      expect(line.sid).toBe("session_x.jsonl");
+      expect(line.msg).toBe("hello");
+    });
+  });
+
+  it("resetLogger 清空 sid 上下文", async () => {
+    initLogger(tmpDir, "info");
+    setLogSid("session_x.jsonl");
+    resetLogger();
+    initLogger(tmpDir, "info");
+    createLogger("x").info("hello");
+    const file = logFile();
+    await vi.waitFor(() => {
+      const line = JSON.parse(readFileSync(file, "utf8").split("\n").filter(Boolean)[0]!);
+      expect(line.sid).toBeUndefined();
     });
   });
 });

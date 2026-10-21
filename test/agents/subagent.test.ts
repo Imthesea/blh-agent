@@ -112,10 +112,10 @@ describe("SubagentRunner", () => {
       "turn_end",
       "subagent",
     ]);
-    expect(events.every((event) => event["sid"] === "subagent")).toBe(true);
+    expect(events.every((event) => event["sid"] === "cli:subagent")).toBe(true);
     const llmEvents = events.filter((event) => event["type"] === "llm");
     expect(llmEvents).toEqual([
-      expect.objectContaining({ sid: "subagent", usage: { promptTokens: 11, completionTokens: 7 } }),
+      expect.objectContaining({ sid: "cli:subagent", usage: { promptTokens: 11, completionTokens: 7 } }),
     ]);
   });
 
@@ -204,8 +204,8 @@ describe("SubagentRunner", () => {
       .flatMap((f) =>
         readFileSync(path.join(dir, f), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>),
       );
-    expect(events[0]).toMatchObject({ type: "subagent", status: "spawn", task: "do it", sid: "subagent" });
-    expect(events.at(-1)).toMatchObject({ type: "subagent", status: "result", sid: "subagent" });
+    expect(events[0]).toMatchObject({ type: "subagent", status: "spawn", task: "do it", sid: "cli:subagent" });
+    expect(events.at(-1)).toMatchObject({ type: "subagent", status: "result", sid: "cli:subagent" });
     expect(typeof events.at(-1)?.["latency_ms"]).toBe("number");
   });
 });

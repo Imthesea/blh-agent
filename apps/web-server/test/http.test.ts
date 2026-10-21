@@ -1,8 +1,8 @@
 import http from "node:http";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createWebServer } from "../src/http/server.js";
 import type { WebContext } from "../src/http/context.js";
 import { SSEBroadcaster } from "../src/bridge.js";
@@ -11,6 +11,7 @@ import { ApprovalCoordinator } from "../src/approval.js";
 import type { ChatMessage, TranscriptLike, TurnLock, WebTurnRunner } from "../src/types.js";
 import type { Server } from "node:http";
 import { makeTestSessionStore, makeTranscript } from "./helpers.js";
+import { initLogger, resetLogger } from "@blh/logger";
 
 async function makeContext(workdir: string, createSession = true): Promise<WebContext> {
   const broadcaster = new SSEBroadcaster();
@@ -46,6 +47,7 @@ afterEach(async () => {
   await Promise.all(servers.map((s) => new Promise<void>((resolve) => s.close(() => resolve()))));
   servers = [];
   rmSync(tmpDir, { recursive: true, force: true });
+  resetLogger();
 });
 
 describe("http 路由", () => {
@@ -269,6 +271,32 @@ describe("http 路由", () => {
     expect(existsSync(target)).toBe(false);
   });
 
+  it("删除会话后日志落一条带 sid 的 session_deleted", async () => {
+    const ctx = makeContext(tmpDir);
+    const { server, url } = await listen(ctx);
+    servers.push(server);
+    initLogger(tmpDir, "info");
+    const sessionsDir = path.join(tmpDir, ".sessions");
+    mkdirSync(sessionsDir, { recursive: true });
+    const target = path.join(sessionsDir, "session_del_marker.jsonl");
+    writeFileSync(target, JSON.stringify({ role: "user", content: "x" }) + "\n");
+    const res = await fetch(`${url}/api/session/delete`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-blh-web": "1" },
+      body: JSON.stringify({ file: "session_del_marker.jsonl" }),
+    });
+    expect(res.status).toBe(200);
+    const d = new Date();
+    const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const logFile = path.join(tmpDir, ".blh", "logs", "blh-" + day + ".log");
+    await vi.waitFor(() => {
+      const line = readFileSync(logFile, "utf8").split("\n").filter(Boolean).find((l) => l.includes("session_deleted"));
+      expect(line).toBeDefined();
+      expect(JSON.parse(line!).sid).toBe("session_del_marker.jsonl");
+    });
+    resetLogger();
+  });
+
   it("POST /api/session/delete 拒绝路径穿越", async () => {
     const { server, url } = await listen(makeContext(tmpDir));
     servers.push(server);
@@ -305,6 +333,28 @@ describe("http 路由", () => {
     servers.push(server);
     const res = await fetch(`${url}/api/sessions/nope.jsonl`);
     expect(res.status).toBe(404);
+  });
+
+  it("GET /api/sessions/:file/export 返回 markdown", async () => {
+    const { server, url } = await listen(makeContext(tmpDir));
+    servers.push(server);
+    const sessionsDir = path.join(tmpDir, ".sessions");
+    mkdirSync(sessionsDir, { recursive: true });
+    writeFileSync(
+      path.join(sessionsDir, "session_export.jsonl"),
+      JSON.stringify({
+        type: "message",
+        seq: 1,
+        timestamp: new Date(0).toISOString(),
+        message: { role: "user", content: "hi" },
+      }) + "\n",
+    );
+    const res = await fetch(`${url}/api/sessions/session_export.jsonl/export`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/markdown");
+    const text = await res.text();
+    expect(text).toContain("### user");
+    expect(text).toContain("hi");
   });
 
   it("Content-Length 超限返回 413", async () => {

@@ -92,6 +92,14 @@ describe("Tracer", () => {
     expect(events[2]!["turn"]).toBe(2);
   });
 
+  it("scoped 派生子 tracer，sid 为「父:子」", () => {
+    const { tracer, dir } = makeTracer();
+    tracer.setSid("session_1.jsonl");
+    tracer.scoped("subagent").event("subagent", { name: "subagent", status: "spawn" });
+    const events = readDay(dir);
+    expect(events[0]!["sid"]).toBe("session_1.jsonl:subagent");
+  });
+
   it("写入失败静默（.blh 路径被文件占用时不抛异常）", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "blh-tracer-"));
     fs.writeFileSync(path.join(dir, ".blh"), "not a dir");

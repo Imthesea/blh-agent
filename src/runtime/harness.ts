@@ -7,9 +7,9 @@ import type { EventBus } from "./events.js";
 import { runInScheduledTurn, runInDreamTurn } from "./security-context.js";
 import { Transcript } from "../session/transcript.js";
 import type { SessionEvent } from "../session/transcript.js";
-import { appendDailyLog } from "../session/daily-log.js";
 import * as path from "node:path";
 import { DEFAULT_SHUTDOWN_TIMEOUT_MS, type LifecycleManager } from "@blh/lifecycle";
+import { setLogSid } from "@blh/logger";
 import type {
   AgentLoopRuntime,
   CompactorPort,
@@ -28,9 +28,6 @@ export class Harness implements AgentLoopRuntime {
   readonly systemPrompt: string;
   /** 会话留档入口；仅 REPL 注入，-p 模式为 undefined（不落盘）。 */
   sessionStore?: SessionStorePort;
-  /** 已写入每日留档的最大事件 seq；logTurn 按它只追加本轮新增消息。 */
-  private lastLoggedSeq = 0;
-
   /** 创建一个 Harness：把所有依赖串起来，并组装系统提示词。 */
   constructor(
     readonly config: Config,
@@ -101,6 +98,13 @@ export class Harness implements AgentLoopRuntime {
     return section ? `${this.systemPrompt}\n\n${section}` : this.systemPrompt;
   }
 
+  /** 把当前会话 sid 绑定到日志上下文（file sink 落盘时附加 sid），返回解绑函数。 */
+  private bindLogSid(): () => void {
+    const sid = this.sessionStore ? path.basename(this.sessionStore.path) : "cli";
+    setLogSid(sid);
+    return () => setLogSid(null);
+  }
+
   /** 跑一轮用户对话：把用户输入加进对话，处理记忆，然后交给 agentLoop 执行并收尾。 */
   async runTurn(
     transcript: Transcript,
@@ -109,31 +113,23 @@ export class Harness implements AgentLoopRuntime {
     signal?: AbortSignal,
   ): Promise<void> {
     this.tracer?.setSid(this.sessionStore ? path.basename(this.sessionStore.path) : "cli");
-    this.goal?.beginQuery();
-    await this.hooks.trigger(USER_PROMPT_SUBMIT, { text });
-    const userMessage: ChatMessage = { role: "user", content: text };
-    transcript.append(userMessage);
-    if (this.memory) {
-      transcript.setSystem(await this.fullSystemPrompt(transcript.messages));
+    const unbind = this.bindLogSid();
+    try {
+      this.goal?.beginQuery();
+      await this.hooks.trigger(USER_PROMPT_SUBMIT, { text });
+      const userMessage: ChatMessage = { role: "user", content: text };
+      transcript.append(userMessage);
+      if (this.memory) {
+        transcript.setSystem(await this.fullSystemPrompt(transcript.messages));
+      }
+      await agentLoop(this, transcript, text, events, signal);
+      await this.hooks.trigger(STOP, {});
+      if (this.memory && (await this.memory.extract(transcript.messages))) {
+        await this.memory.consolidate();
+      }
+    } finally {
+      unbind();
     }
-    await agentLoop(this, transcript, text, events, signal);
-    await this.hooks.trigger(STOP, {});
-    if (this.memory && (await this.memory.extract(transcript.messages))) {
-      await this.memory.consolidate();
-    }
-    this.logTurn(transcript.messagesWithIds);
-  }
-
-  /** 会话留档：只把本轮新增的消息追加到 <sessions>/chat/<day>.md（按 seq 增量，避免每轮全量重写）。 */
-  private logTurn(messages: readonly ChatMessage[]): void {
-    if (this.sessionStore === undefined) return;
-    const fresh = messages.filter((m) => {
-      const seq = m.id !== undefined ? Number(m.id) : Number.NaN;
-      return Number.isInteger(seq) && seq > this.lastLoggedSeq;
-    });
-    if (fresh.length === 0) return;
-    appendDailyLog(path.dirname(this.sessionStore.path), fresh);
-    this.lastLoggedSeq = Math.max(this.lastLoggedSeq, ...fresh.map((m) => Number(m.id)));
   }
 
   /** 跑一轮定时任务：取出到期的定时任务注入对话，执行一轮 agentLoop；出错或被打断就回滚并重新排队。 */
@@ -143,29 +139,31 @@ export class Harness implements AgentLoopRuntime {
     const boundary = transcript.lastSeq;
     const fired = jobs.consumeAndInjectCron(transcript);
     if (fired.length === 0) return;
-    for (const job of fired) {
-      this.tracer?.event("job", { kind: "cron", name: job.id, status: "fired" });
-    }
+    const unbind = this.bindLogSid();
     try {
+      for (const job of fired) {
+        this.tracer?.event("job", { kind: "cron", name: job.id, status: "fired" });
+      }
       await runInScheduledTurn(() =>
         agentLoop(this, transcript, "[scheduled]", undefined, signal),
       );
+      if (signal?.aborted) {
+        for (const job of fired) {
+          this.tracer?.event("job", { kind: "cron", name: job.id, status: "aborted" });
+        }
+        transcript.rollbackTo(boundary);
+        jobs.cron.restore(fired);
+        return;
+      }
+      jobs.cron.acknowledge(fired);
+      await this.hooks.trigger(STOP, {});
     } catch (error) {
       transcript.rollbackTo(boundary);
       jobs.cron.restore(fired);
       throw error;
+    } finally {
+      unbind();
     }
-    if (signal?.aborted) {
-      for (const job of fired) {
-        this.tracer?.event("job", { kind: "cron", name: job.id, status: "aborted" });
-      }
-      transcript.rollbackTo(boundary);
-      jobs.cron.restore(fired);
-      return;
-    }
-    jobs.cron.acknowledge(fired);
-    await this.hooks.trigger(STOP, {});
-    this.logTurn(transcript.messagesWithIds);
   }
 
   /** dream 是否到期（无记忆系统时恒 false）。 */
@@ -184,6 +182,7 @@ export class Harness implements AgentLoopRuntime {
     dream.markAttempt();
     const snapshot = dream.snapshot();
     const boundary = transcript.lastSeq;
+    const unbind = this.bindLogSid();
     this.tracer?.event("job", { kind: "dream", status: "started" });
     try {
       transcript.append({ role: "user", content: dream.prompt });
@@ -195,8 +194,7 @@ export class Harness implements AgentLoopRuntime {
       dream.applyTrash();
       dream.validateOutput();
       dream.markSuccess();
-      this.logTurn(transcript.messagesWithIds);
-      this.tracer?.event("job", { kind: "dream", status: "completed" });
+        this.tracer?.event("job", { kind: "dream", status: "completed" });
     } catch (error) {
       dream.restore(snapshot);
       dream.clearTrash();
@@ -206,6 +204,8 @@ export class Harness implements AgentLoopRuntime {
         status: error instanceof TurnCancelledError ? "aborted" : "failed",
         error: String(error),
       });
+    } finally {
+      unbind();
     }
   }
 
@@ -215,10 +215,14 @@ export class Harness implements AgentLoopRuntime {
     if (agents === undefined) return;
     const events = agents.consumeAndInjectTeam(transcript);
     if (events === 0) return;
-    await runInScheduledTurn(() =>
-      agentLoop(this, transcript, "[team]", undefined, signal),
-    );
-    await this.hooks.trigger(STOP, {});
-    this.logTurn(transcript.messagesWithIds);
+    const unbind = this.bindLogSid();
+    try {
+      await runInScheduledTurn(() =>
+        agentLoop(this, transcript, "[team]", undefined, signal),
+      );
+      await this.hooks.trigger(STOP, {});
+    } finally {
+      unbind();
+    }
   }
 }

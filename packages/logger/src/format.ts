@@ -7,6 +7,9 @@ export const LEVEL_ORDER: Record<LogLevel, number> = {
   error: 40,
 };
 
+/** 单个字段值的最大字符数；超过则截断并追加标记。 */
+export const MAX_FIELD_CHARS = 512;
+
 /** 判断一个值是不是合法日志级别。 */
 export function isLogLevel(value: unknown): value is LogLevel {
   return value === "debug" || value === "info" || value === "warn" || value === "error";
@@ -33,11 +36,30 @@ function safeStringify(value: unknown): string {
   }
 }
 
+/** 截断单个字符串：超长时保留前 max 字符并追加「截断了多少」的标记。 */
+export function truncateString(value: string, max = MAX_FIELD_CHARS): string {
+  if (value.length <= max) return value;
+  return value.slice(0, max) + `…[truncated ${value.length - max} chars]`;
+}
+
+/**
+ * 把 fields 里所有顶层字符串值截断（保留结构、只动字符串叶子），返回新对象，不修改入参。
+ * 供文件落盘与去重 key 使用；终端格式在 formatFields 里对渲染文本整体截断。
+ */
+export function truncateStringFields(fields: LogFields): LogFields {
+  const out: LogFields = {};
+  for (const [key, value] of Object.entries(fields)) {
+    out[key] = typeof value === "string" ? truncateString(value) : value;
+  }
+  return out;
+}
+
 function formatFields(fields: LogFields): string {
   return Object.entries(fields)
     .map(([key, value]) => {
-      const text =
-        typeof value === "object" && value !== null ? safeStringify(value) : String(value);
+      const text = truncateString(
+        typeof value === "object" && value !== null ? safeStringify(value) : String(value),
+      );
       // 值含空白或引号时用双引号包裹并转义，保证单行可解析
       if (/[\s"]/.test(text)) {
         const escaped = text.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
@@ -62,7 +84,8 @@ export function formatFile(entry: LogEntry): string {
         level: entry.level,
         module: entry.module,
         msg: entry.message,
-        fields: entry.fields,
+        sid: entry.sid,
+        fields: truncateStringFields(entry.fields),
       }) + "\n"
     );
   } catch {

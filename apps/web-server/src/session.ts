@@ -10,7 +10,7 @@ import type {
 import type { WebEvent } from "./types.js";
 import type { ApprovalCoordinator } from "./approval.js";
 import { EventBus } from "./events.js";
-import { createLogger } from "@blh/logger";
+import { createLogger, setLogSid } from "@blh/logger";
 
 const log = createLogger("web-server.session");
 
@@ -34,6 +34,8 @@ export class SessionManager {
     private readonly broadcast: (event: WebEvent) => void,
     private readonly approvals: ApprovalCoordinator,
     private readonly sessionStore: SessionStoreModule,
+    /** 删除会话后清理其 trace/log 行的回调（根包注入）。 */
+    private readonly onSessionDeleted?: (file: string) => void,
   ) {}
 
   private ensureActive(): void {
@@ -141,6 +143,14 @@ export class SessionManager {
       this.ensureActive();
       const fullPath = this.sessionFile(workdir, file);
       this.sessionStore.remove(fullPath);
+      this.onSessionDeleted?.(file);
+      // 打一条带 sid 的删除事件，让该会话的历史日志/错误可追溯到「已被删除」。
+      setLogSid(file);
+      try {
+        log.info("session_deleted", { file: fullPath });
+      } finally {
+        setLogSid(null);
+      }
       if (this.current !== undefined && this.current.file === fullPath) {
         this.current = undefined;
         const next = this.sessionStore.latest(workdir);

@@ -48,9 +48,10 @@ export class Tracer {
     this.sid = sid;
   }
 
-  scoped(sid: string): Tracer {
+  /** 派生一个子 tracer（如 subagent / teammate），sid 记为「父 sid:子名」，便于按会话前缀清理。 */
+  scoped(name: string): Tracer {
     const tracer = new Tracer(this.workdir);
-    tracer.setSid(sid);
+    tracer.setSid(`${this.sid}:${name}`);
     return tracer;
   }
 

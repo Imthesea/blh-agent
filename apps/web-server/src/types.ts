@@ -82,6 +82,7 @@ export interface SessionStoreModule {
   loadSummary(filePath: string): string | null;
   remove(filePath: string): void;
   latest(workdir: string): string | null;
+  renderMarkdown(filePath: string): string;
 }
 
 export type AgentEventListener = (event: AgentEvent) => void;

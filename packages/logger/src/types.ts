@@ -18,6 +18,8 @@ export interface LogEntry {
   module: string;
   message: string;
   fields: LogFields;
+  /** 归属会话（文件名，如 session_xxx.jsonl）；可选，仅 file sink 序列化。 */
+  sid?: string;
 }
 
 export interface LogSink {

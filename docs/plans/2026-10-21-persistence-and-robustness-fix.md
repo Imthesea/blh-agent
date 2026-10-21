@@ -8,14 +8,14 @@
 | # | 问题（实测证据） | 根因 | 修复方向 |
 |---|---|---|---|
 | A1 | usage 双写：`trace.llm.usage` 与 `.blh/usage.jsonl` 存同一份 token 数 | 两个独立写入点 | ✅ 单一事实源：trace 为唯一 token 源，删除 usage.jsonl，usage 由 trace llm 事件聚合 |
-| A2 | `chat/{day}.md` 是第 4 份全文对话副本（118KB） | `appendDailyLog` eager append 全文 | 改为按需渲染（读 session 投影生成），或只存逐轮摘要 |
-| A3 | `compactor.persistedPreview` 为取 2000 字预览全量读文件 | `readFileSync(...).slice(0,n)` | 有界读（fd + read 前 N 字节） |
+| A2 | `chat/{day}.md` 是第 4 份全文对话副本（118KB） | `appendDailyLog` eager append 全文 | 按需渲染（读 session 投影生成）✅ |
+| A3 | `compactor.persistedPreview` 为取 2000 字预览全量读文件 | `readFileSync(...).slice(0,n)` | 有界读（fd + read 前 N 字节）✅ |
 | A4 | `cost_usd` 恒 0 | `pricing.ts` 缺 `deepseek-flash` 价格，`costFor` 返回 null | ✅ 补 DeepSeek 官方定价（cache-miss + off-peak）+ 未知模型显式告警 |
-| A5 | log 同一错误 45 条、每条 ~1KB 完整命令 | logger 无去重/无截断 | logger 层加 dedup + 长字段截断 |
+| A5 | log 同一错误 45 条、每条 ~1KB 完整命令 | logger 无去重/无截断 | logger 层加 dedup + 长字段截断 ✅ |
 | B1 | `pre_tool_use` hook 正则崩溃，且 **fail-open** | `HookBus.firstBlock` 吞异常当「未拦截」 | 安全 hook 失败关闭 + 修正则构造转义 |
 | B2 | `<reminder>Update your todos.</reminder>` 注入 13 次 | `TodoManager.noteRound` 纯计数器、不检查 todo 是否真的过期 | 有界提醒：无未完成项不提醒 + 每轮/每回合上限 |
 | B3 | 一次 40 轮 / 58 工具 / 174s 后 abort 的失控回合 | 无回合预算、无重复命令熔断 | 回合熔断：max iterations + 相同命令重复检测 + 无进展检测 |
-| C1 | 日志里 45 条 `hawaii/` 任务错误，对应不到任何 session | 日志按天、会话删除/清理不同步 | 会话删除时清理归属日志，或日志携带 session id 并可追溯 |
+| C1 | 日志里 45 条 `hawaii/` 任务错误，对应不到任何 session | 日志按天、会话删除/清理不同步 | log 加 sid + 删会话打 delete 标记 + 按 sid 重写清理 trace/log ✅ |
 
 ---
 
@@ -40,31 +40,32 @@
 
 **成功标准**：新进程不再生成 usage.jsonl；`TraceStore.usage()` 从 trace 聚合结果与原 usage.jsonl 语义一致；追加 1 次 llm 后 usage 不翻倍（`store.test.ts` 增量断言）。
 
-### A2. `chat/{day}.md` 从「eager 全文 append」改为「按需渲染」（改接口，推荐）
+### A2. `chat/{day}.md` 从「eager 全文 append」改为「按需渲染」（✅ 已实施）
 
-**根因**：`src/session/daily-log.ts` 的 `appendDailyLog` 每轮把整段对话渲染成 markdown 追加（我上一轮只修了「每轮只追加增量」，但仍是全文副本）。
+**根因**：`src/session/daily-log.ts` 的 `appendDailyLog` 每轮把整段对话渲染成 markdown 追加（只写不读的第 3 份全文副本）。
 
-**方案**：
-- 删除 `appendDailyLog` 的 eager 写入；改成一个**纯函数** `renderDailyLog(sessionStore)`，在 web-server 的 `GET /api/session/export`（或一个 `/api/chat-log?date=`）里按需从 session 投影生成。
-- 或者保留落盘、但内容降级为「每轮一句话摘要」而非全文（更省，但失去 audit 价值）。
-- 推荐前者：audit 需求由 session jsonl 本身满足，markdown 只是「人类可读视图」，不该是第二个事实源。
+**实施**：
+- `daily-log.ts` 重写为纯函数 `renderSessionMarkdown(messages)`；删除 `appendDailyLog` / `localDay` 与 fs 依赖。
+- `harness.ts` 删除 `logTurn` 调用链与 `lastLoggedSeq`，不再 eager 落盘。
+- `SessionStore.renderMarkdown(filePath)` 静态方法：读 session 事件 → 投影消息 → 渲染。
+- web-server 新增只读接口 `GET /api/sessions/:file/export`（返回 `text/markdown`）。
+- 历史 `chat/*.md` 保留不删，仅停止继续写入。
 
-**涉及文件**：`src/session/daily-log.ts`、`src/runtime/harness.ts`（去掉 `logTurn` 调用链）、`apps/web-server` 新增只读渲染接口、`test/session/daily-log.test.ts` 改为测渲染函数。
+**涉及文件**：`src/session/daily-log.ts`、`src/session/store.ts`、`src/runtime/harness.ts`、`apps/web-server/src/types.ts`、`apps/web-server/src/http/routes/session.ts`、`test/session/{daily-log,store}.test.ts`、`apps/web-server/test/{helpers,http}.test.ts`、`test/runtime/harness.test.ts`。
 
-**风险/缓解**：去掉自动落盘会丢失「崩溃后仍有人类可读留档」——由 session jsonl 兜底（它先落盘），影响面可控。
+**成功标准**：新进程不再产生 `.sessions/chat/` 增长；`/api/sessions/:file/export` 按需渲染与旧 markdown 语义等价。
+### A3. `persistedPreview` 有界读（✅ 已实施）
 
-**成功标准**：不再有 `.sessions/chat/` 自动增长；`/api/chat-log` 按需渲染与旧内容等价。
+**根因**：`src/compaction/compactor.ts` 的 `readFileSync(savedPath, "utf8").slice(0, previewChars)` 为取 2000 字预览读了整文件。
 
-### A3. `persistedPreview` 有界读
-
-**根因**：`src/compaction/compactor.ts:141` `readFileSync(savedPath, "utf8").slice(0, previewChars)` 为取预览读了整文件。
-
-**方案**：用 `openSync` + `readSync` 只读前 `previewChars*4` 字节（UTF-8 上限），或复用 `src/tracing/store.ts` 的 JsonlTail 思路。
+**实施**：
+- 新增导出函数 `readFileHead(file, maxChars)`：`openSync + readSync` 只读前 `maxChars*4` 字节（UTF-8 单字符上限），返回 `{ text, bytesRead }`。
+- `persistedPreview` 改调 `readFileHead(savedPath, previewChars).text`，读失败仍回退 `output.slice(0, previewChars)`。
+- `bytesRead` 暴露给测试，直接断言「读 ≤ maxChars*4 字节」而不是整文件。
 
 **涉及文件**：`src/compaction/compactor.ts`、`test/compaction/compactor.test.ts`。
 
-**成功标准**：新增测试——对 10MB 落盘文件取 2000 字预览，断言读取字节数 `stat().size` 不再随文件大小线性增长（或直接断言读到的是前 N 字节）。
-
+**成功标准**：10MB 文件取 2000 字预览 `bytesRead === 8000`；多字节字符不截出乱码；空文件/小文件边界正确。
 ### A4. `cost_usd` 恒 0：补价格表 + 未知模型告警（✅ 已实施）
 
 **根因**：`src/tracing/pricing.ts` 的 `MODEL_PRICES` 没有 `deepseek-flash`，`costFor` 返回 null，`tracer.ts` 只在非 null 时累加，于是 `cost_usd` 恒 0。
@@ -83,21 +84,20 @@
 
 **成功标准**：`cost_usd` 不再恒 0；未知模型有告警日志（跨 Tracer 实例只告警一次）。
 
-### A5. logger 去重 + 长字段截断
+### A5. logger 去重 + 长字段截断（✅ 已实施）
 
-**根因**：`packages/logger` 的 `node.ts` 把 `fields` 原样 JSON 序列化，长字符串（整条命令/正则）不截断，同一错误连续打印无去重。
+**根因**：`packages/logger` 的 `format.ts` 把 `fields` 原样序列化，长字符串不截断；同一错误连续打印无去重。
 
-**方案**：
-- logger 加**可配置的字段截断**（默认 512 字符，超过打 `…[truncated N chars]`）。
-- 加**同 key 短窗口去重**（如 5 秒内同 `module+msg` 只打一次 + `×N` 计数），避免 45 条刷屏。
-- 这两项默认开启，`debug` 级别可关。
+**实施**：
+- 截断（`format.ts`）：`truncateString(value, max=512)` 超长追加 `…[truncated N chars]` 标记；终端格式在渲染文本层截断，文件格式对顶层字符串字段截断（`truncateStringFields`）。
+- 去重（`node.ts` 文件 sink，终端保持实时）：仅对 `warn/error` 生效；key = `level+module+message+截断后 fields`；5 秒窗口内同 key 只落第一条，窗口结束（惰性定时 flush 或 `flushPendingDedup()`）补一行 `（重复 N-1 次）`。
+- `resetLogger()` 清空去重状态；`debug/info` 不去重，避免吞掉有意义的重复 info。
 
-**涉及文件**：`packages/logger/src/node.ts`、`packages/logger/src/browser.ts`（对齐）、`packages/logger/test/*`。
+**涉及文件**：`packages/logger/src/format.ts`、`packages/logger/src/node.ts`、`packages/logger/test/{format,node}.test.ts`。
 
-**成功标准**：单测——同一错误连打 45 次只落 1 行 + 计数；超长字段被截断。
+**成功标准**：同 key 5 次只落 1 行 + `重复 4 次`；不同 fields 不去重；info 不去重；长字段截断带标记。
 
 ---
-
 ## 2. 组 B：健壮性
 
 ### B1. hook 失败关闭（安全，最高优先）
@@ -143,31 +143,29 @@
 
 ## 3. 组 C：生命周期一致性
 
-### C1. 日志/会话生命周期对齐
+### C1. 日志/会话生命周期对齐（✅ 已实施 · 最小档 + 全量清理）
 
-**根因**：log/trace 按天落盘，session 按会话落盘；会话删除/清理后，其日志残留（本次 45 条 hawaii 错误对不上任何 session）。
+**根因**：log/trace 按天落盘、session 按会话落盘；会话删除后日志残留（45 条 hawaii 错误对不上 session），且 log 行不带 sid，无法追溯。
 
-**方案**：
-- 让 log/trace 的每条记录**携带 `sid`**（trace 已有 sid，log 没有——给 log 加）；
-- `SessionStore.remove` 时，同步清理该 sid 的日志（或标记为 orphan）；
-- 至少：web-server 的 session 删除接口增加「清理该 session 的 trace/log 行」步骤。
+**实施**：
+- logger 加 **sid 上下文**：`LogEntry.sid`（仅 file sink 序列化）；`setLogSid(sid)` 设置、`resetLogger()` 清空；`writeEntryToFile` 自动附加当前 sid，去重 key 也含 sid。
+- `harness.ts` 四个 turn 入口用 `bindLogSid()` + `finally` 解绑，把会话文件名绑定为日志 sid。
+- 删会话时 `SessionManager.remove` 打一条带 sid 的 `session_deleted` 日志，使删除动作可追溯。
+- **全量清理**：`src/tracing/cleanup.ts` 的 `removeSessionArtifacts(workdir, sid)` 重写 `.blh/traces/*.jsonl` 与 `.blh/logs/blh-*.log`，按 `sid === target || sid.startsWith(target + ":")` 删除该会话及其子代理的行（临时文件 + 原子 rename；坏行保留、I/O 失败尽力而为）。
+- `Tracer.scoped` 改为层级 sid（`父 sid:子名`），使 subagent/teammate 的 trace 可按父会话前缀清理。
+- 接线：根 CLI 经 `onSessionDeleted` 回调注入 web-server（`startWebServer` → `SessionManager.remove`）。
 
-**涉及文件**：`packages/logger/src/node.ts`（log 加 sid 上下文）、`src/tracing/tracer.ts`、`apps/web-server/src/session.ts`、`apps/web-server/src/http/routes/session.ts`。
+**涉及文件**：`packages/logger/src/{types,format,node}.ts`、`src/tracing/{tracer,cleanup}.ts`、`src/runtime/harness.ts`、`apps/web-server/src/{index,session}.ts`、`src/cli/web.ts`、`test/tracing/cleanup.test.ts`、`test/agents/{subagent,teammate}.test.ts`、`apps/web-server/test/session.test.ts`。
 
-**风险/缓解**：日志按天混合多 session，按 sid 过滤删除需要行级标记——若成本过高，退而求其次：只做「删除会话时打一条明确的 delete 事件」，让日志可追溯。
-
-**成功标准**：删除会话后，该 sid 的 log 行不再残留（或明确可追溯）。
-
----
+**成功标准**：log 行带 sid；删除会话后其 trace/log 行（含子代理）被清理，其他会话行保留；`session_deleted` 标记带 sid。
 
 ## 4. 实施顺序（建议）
 
-1. **B1（hook fail-closed + 正则转义）** —— 安全，独立，先做。
-2. **B3 + B2（回合熔断 + todo 有界提醒）** —— 一起做，都改 loop.ts，顺带修掉 13 次提醒。
-3. **A4 + A1（价格表 + usage 单一来源）** —— 数据正确性。
-4. **A3 + A5（有界读 + logger 截断/去重）** —— 纯性能/噪声。
-5. **A2 + C1（chat 渲染化 + 生命周期对齐）** —— 结构性改动，最后做，留出回归窗口。
-
+1. **B1（hook fail-closed + 正则转义）** ✅
+2. **B3 + B2（回合熔断 + todo 有界提醒）** ✅
+3. **A4 + A1（价格表 + usage 单一来源）** ✅
+4. **A3 + A5（有界读 + logger 截断/去重）** ✅
+5. **A2 + C1（chat 渲染化 + 生命周期对齐 · 最小档）** ✅ 全部完成。
 ## 5. 边界审查登记（boundary-check 5 步）
 
 新增/遗漏的追加型数据点必须登记进 `skills/boundary-check/references/registry.md`：
@@ -175,7 +173,7 @@
 | 数据点 | 5 步结论 |
 |---|---|
 | `<workdir>/.blh/logs/blh-{day}.log` | **未登记**。读取无书签（全量）、无保留策略 → 补：按大小/天数滚动 + A5 截断去重 |
-| `<workdir>/.sessions/chat/{day}.md` | **未登记**。A2 改为按需渲染后可移出「追加型」 |
+| `<workdir>/.sessions/chat/{day}.md` | 已移除（A2 按需渲染，不再 eager 落盘）✅ |
 | `<workdir>/.sessions/session_*.jsonl` | 追加但按会话有界；可接受，但需 C1 的删除对齐 |
 | `<workdir>/.blh/traces/{date}.jsonl` | 已登记（JsonlTail 增量读）✅ |
 | `<workdir>/.blh/usage.jsonl` | 已删除（A1 方案 A：trace 为唯一 token 源）✅ |

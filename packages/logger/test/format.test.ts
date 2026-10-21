@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatFile, formatTerminal } from "../src/format.js";
+import { formatFile, formatTerminal, truncateString, truncateStringFields } from "../src/format.js";
 
 describe("formatTerminal", () => {
   it("渲染时间、级别、模块、消息、字段", () => {
@@ -80,4 +80,53 @@ it("循环引用字段不抛错", () => {
       fields: { circular },
     }),
   ).not.toThrow();
+});
+
+
+describe("truncateString", () => {
+  it("短值原样返回", () => {
+    expect(truncateString("hello")).toBe("hello");
+  });
+
+  it("超长值截断并带标记", () => {
+    expect(truncateString("a".repeat(600))).toBe("a".repeat(512) + "…[truncated 88 chars]");
+  });
+});
+
+describe("truncateStringFields", () => {
+  it("只截断字符串值，保留结构与非字符串值", () => {
+    const out = truncateStringFields({ cmd: "a".repeat(600), n: 3, ok: true });
+    expect(out.cmd).toBe("a".repeat(512) + "…[truncated 88 chars]");
+    expect(out.n).toBe(3);
+    expect(out.ok).toBe(true);
+  });
+});
+
+describe("截断落盘与终端格式", () => {
+  const entry = {
+    time: new Date("2026-09-18T08:03:22.000Z"),
+    level: "info" as const,
+    module: "x",
+    message: "m",
+    fields: { cmd: "a".repeat(1000) },
+  };
+
+  it("formatTerminal 对长字段渲染文本截断", () => {
+    const line = formatTerminal(entry);
+    expect(line).toContain("…[truncated 488 chars]");
+    expect(line).not.toContain("a".repeat(513));
+  });
+
+  it("formatFile 对长字符串字段截断且仍可解析", () => {
+    const line = formatFile(entry);
+    const parsed = JSON.parse(line);
+    expect(parsed.fields.cmd).toBe("a".repeat(512) + "…[truncated 488 chars]");
+  });
+
+  it("formatFile 保留非字符串字段类型", () => {
+    const line = formatFile({ ...entry, fields: { n: 3, ok: true } });
+    const parsed = JSON.parse(line);
+    expect(parsed.fields.n).toBe(3);
+    expect(parsed.fields.ok).toBe(true);
+  });
 });

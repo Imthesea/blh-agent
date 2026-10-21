@@ -22,6 +22,8 @@ export interface WebServerOptions {
   buildHarness: BuildHarness;
   /** 可选 trace 读取模块（根包注入 createTraceModule(config.workdir)）。 */
   trace?: TraceModule;
+  /** 删除会话后清理其 trace/log 行的回调（根包注入，可选）。 */
+  onSessionDeleted?: (file: string) => void;
 }
 
 export interface RunningWebServer {
@@ -104,6 +106,7 @@ export async function startWebServer(options: WebServerOptions): Promise<Running
       (event) => broadcaster.broadcast(event),
       approvals,
       options.sessionStore,
+      options.onSessionDeleted,
     );
     if (harness.jobs !== undefined) {
       harness.jobs.setDreamTurn(

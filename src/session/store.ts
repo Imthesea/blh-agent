@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import * as path from "node:path";
 import type { ChatMessage } from "../contracts/types.js";
 import { projectMessages, projectSummary, type SessionEvent } from "./transcript.js";
+import { renderSessionMarkdown } from "./daily-log.js";
 
 export const CURRENT_SESSION_VERSION = 1;
 
@@ -124,6 +125,11 @@ export class SessionStore {
   /** 删除指定会话文件；文件不存在时静默（幂等）。 */
   static remove(filePath: string): void {
     rmSync(filePath, { force: true });
+  }
+
+  /** 按需渲染会话为人类可读 markdown（不再 eager 落盘到 chat/{day}.md）。 */
+  static renderMarkdown(filePath: string): string {
+    return renderSessionMarkdown(SessionStore.loadMessages(filePath));
   }
 
   /** 读取 header 与事件；非事件行（如 v0 旧格式裸消息）会被跳过。 */

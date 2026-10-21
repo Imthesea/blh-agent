@@ -127,6 +127,11 @@ export function makeTestSessionStore(): SessionStoreModule {
       }
       return summary;
     },
+    renderMarkdown(filePath) {
+      return messagesFromEvents(this.loadSession(filePath).events)
+        .map((m) => `### ${m.role}\n${m.content ?? ""}`)
+        .join("\n\n") + "\n\n";
+    },
     remove(filePath) {
       rmSync(filePath, { force: true });
     },

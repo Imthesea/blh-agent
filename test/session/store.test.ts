@@ -139,6 +139,23 @@ describe("SessionStore", () => {
     expect(newer.path).not.toBe(older.path);
   });
 
+  it("renderMarkdown 把会话投影成 markdown", () => {
+    const store = SessionStore.create(tmpDir);
+    store.appendEvent({
+      type: "message", seq: 1, timestamp: new Date().toISOString(),
+      message: { role: "user", content: "hi" },
+    });
+    store.appendEvent({
+      type: "message", seq: 2, timestamp: new Date().toISOString(),
+      message: { role: "assistant", content: "hello" },
+    });
+    const md = SessionStore.renderMarkdown(store.path);
+    expect(md).toContain("### user");
+    expect(md).toContain("hi");
+    expect(md).toContain("### assistant");
+    expect(md).toContain("hello");
+  });
+
   it("remove 删除指定会话文件，文件不存在时静默", () => {
     const store = SessionStore.create(tmpDir);
     expect(existsSync(store.path)).toBe(true);
